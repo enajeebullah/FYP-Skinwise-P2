@@ -1,0 +1,19 @@
+node_modules/
+.next/
+out/
+.env*.local
+
+# Python virtual environments
+.venv/
+.venv-1/
+backend/.venv/
+
+# Python cache
+__pycache__/
+backend/**/__pycache__/
+
+# Logs
+npm-debug.log*
+
+# OS files
+.DS_Store
