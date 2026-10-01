@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import ResultPanel from "./ResultPanel";
 import AcneCanvas from "./AcneCanvas";
 import SeverityMeter from "./SeverityMeter";
 import WeatherCard from "./WeatherCard";
 import RoutineCard from "./RoutineCard";
-import AnalysisSummaryCard from "./AnalysisSummaryCard";
 import AnalysisPipeline from "./AnalysisPipeline";
 import TechnicalDetailsCard from "./TechnicalDetailsCard";
 import ImprovementInsights from "./ImprovementInsights";
@@ -58,6 +58,7 @@ export default function Dashboard({
   userId,
   onReset,
 }: DashboardProps) {
+  const router = useRouter();
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [weatherResolved, setWeatherResolved] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("pending");
@@ -231,38 +232,41 @@ export default function Dashboard({
     if (error) {
       hasSavedRef.current = false; // allow retry on failure
       console.error("Failed to save scan:", error.message);
+      return;
     }
+    router.push("/#scanner");
   }
 
   return (
     <div className="dashboard-content animate-fadeUp">
-      <section className="analysis-hero">
-        <div className="analysis-hero-copy">
-          <p className="eyebrow">AI SKIN ANALYSIS SUMMARY</p>
-          <h1>Your Skin Analysis is Complete</h1>
-          <p className="analysis-hero-description">
-            Here&rsquo;s what we found in your skin scan, with personalized
-            recommendations based on your skin type, acne severity and local weather.
-          </p>
-          <div className="analysis-hero-badge">
-            <span className="hero-sparkle" aria-hidden="true">✦</span>
-            SkinWISE AI <span aria-hidden="true">·</span> YOLO11m acne detection
+      <header className="scan-result-header">
+        <div className="scan-result-heading">
+          <button
+            type="button"
+            className="scan-result-mark focus-ring"
+            onClick={onReset}
+            aria-label="Back to scan"
+          >
+            ←
+          </button>
+          <div>
+            <p className="eyebrow">SCAN RESULTS</p>
+            <h1>Your skin analysis results</h1>
           </div>
         </div>
-        <div className="analysis-hero-photo">
-          <img src={imageSrc} alt="Photo used for your skin analysis" />
-          <div className="hero-photo-caption">Your scan · analyzed privately on this device</div>
+        <div className="scan-result-actions">
+          <span className="scan-result-complete"><i aria-hidden="true">✓</i> Analysis complete</span>
+          <button
+            onClick={handleDownloadReport}
+            className="focus-ring scan-result-download"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path d="M12 15V3m0 12 4-4m-4 4-4-4M4 16v4h16v-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Download PDF
+          </button>
         </div>
-        <div className="analysis-hero-promise">
-          <span>Better Analysis</span>
-          <span>for Healthier Skin</span>
-          <i aria-hidden="true" />
-        </div>
-      </section>
-
-      <AnalysisPipeline
-        weatherStatus={!weatherResolved ? "pending" : weather ? "done" : "skipped"}
-      />
+      </header>
 
       {analysisWarning && (
         <p className="rounded-xl border border-[#D9A441]/40 bg-[#D9A441]/[0.08] px-4 py-3 text-sm text-[#765817]">
@@ -270,72 +274,70 @@ export default function Dashboard({
         </p>
       )}
 
-      <AnalysisSummaryCard
-        skinType={confirmedSkinType}
-        overallSeverity={overall.overallSeverity}
-        reviewed={reviewed}
-        totalLesions={acneResult.total}
-        confidence={skinResult.topConfidence}
-        analysisTimeSec={(skinInferenceMs + acneInferenceMs) / 1000}
-        recommendationPaused={routine.recommendationPaused}
+      <AnalysisPipeline
+        weatherStatus={!weatherResolved ? "pending" : weather ? "done" : "skipped"}
       />
 
       <div className="analysis-results-grid">
-      <div className="skin-results-overview">
-        <ResultPanel result={skinResult} imageSrc={imageSrc} />
+        <div className="skin-results-overview">
+          <ResultPanel result={skinResult} imageSrc={imageSrc} />
 
-        {confirmedSkinType !== skinResult.topClass && (
-          <p className="mt-3 text-xs text-muted">
-            You confirmed this as <strong>{CLASS_META[confirmedSkinType].label.toLowerCase()}</strong> skin
-            via the quiz — the routine below uses that instead of the scan&rsquo;s top result.
-          </p>
-        )}
-      </div>
-
-      <div id="acne-detection" className="acne-results-card rounded-2xl border border-line bg-panel panel-elevated p-6 sm:p-8">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-          <p className="font-mono text-[11px] uppercase tracking-wider text-muted">
-            Acne lesion detection · YOLO11m
-          </p>
+          {confirmedSkinType !== skinResult.topClass && (
+            <p className="mt-3 text-xs text-muted">
+              You confirmed this as <strong>{CLASS_META[confirmedSkinType].label.toLowerCase()}</strong> skin
+              via the quiz — the routine below uses that instead of the scan&rsquo;s top result.
+            </p>
+          )}
         </div>
 
-        <AcneCanvas ref={acneCanvasRef} imageSrc={imageSrc} detection={acneResult} />
-
-        <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {ACNE_CLASS_ORDER.map((cls) => (
-            <div key={cls} className="text-center rounded-xl bg-paper border border-line py-3">
-              <p className="font-display text-2xl" style={{ color: ACNE_CLASS_META[cls].hex }}>
-                {acneResult.counts[cls]}
-              </p>
-              <p className="text-xs text-muted mt-0.5">{ACNE_CLASS_META[cls].label}</p>
+        <div id="acne-detection" className="acne-results-card rounded-2xl border border-line bg-panel panel-elevated p-6 sm:p-8">
+          <div className="acne-results-heading">
+            <span className="acne-results-icon" aria-hidden="true">✳</span>
+            <div>
+              <h2>Acne lesion detection</h2>
+              <p>Detected lesions are highlighted on your face.</p>
             </div>
-          ))}
-        </div>
+          </div>
 
-        <p className="text-sm text-ink/70 mt-5 mb-5">
-          {acneResult.total === 0
-            ? "No lesions detected — this photo reads as clear."
-            : `${acneResult.total} total lesion${acneResult.total === 1 ? "" : "s"} detected by YOLO11m — confirm the counts below before they're used for severity grading.`}
-        </p>
+          <AcneCanvas ref={acneCanvasRef} imageSrc={imageSrc} detection={acneResult} />
 
-        <div className="pt-5 border-t border-line">
-          <SeverityMeter
-            overallSeverity={overall.overallSeverity}
-            noduleCount={confirmedCounts.nodules}
-          />
+          <div className="lesion-count-grid" aria-label="Lesion counts for review">
+            {ACNE_CLASS_ORDER.map((cls) => {
+              const count =
+                cls === "comedone"
+                  ? confirmedCounts.comedones
+                  : cls === "nodules"
+                    ? confirmedCounts.nodules
+                    : cls === "papules"
+                      ? totalPapules(confirmedCounts)
+                      : totalPustules(confirmedCounts);
+
+              return (
+                <div className={`lesion-count-card lesion-count-${cls}`} key={cls}>
+                  <span className="lesion-count-symbol" aria-hidden="true">
+                    {cls === "comedone" ? "●" : cls === "nodules" ? "✦" : cls === "papules" ? "●" : "◉"}
+                  </span>
+                  <span className="lesion-count-label">{ACNE_CLASS_META[cls].label}</span>
+                  <strong>{count}</strong>
+                </div>
+              );
+            })}
+          </div>
+
+          <details className="count-edit-disclosure">
+            <summary>{reviewed ? "Counts reviewed · edit counts" : "Review or edit lesion counts"}</summary>
+            <LesionReviewCard
+              counts={confirmedCounts}
+              onChange={handleCountsChange}
+              landmarksAvailable={!!landmarks}
+              reviewed={reviewed}
+              onReviewedChange={setReviewed}
+            />
+          </details>
         </div>
       </div>
-      </div>
 
-      <LesionReviewCard
-        counts={confirmedCounts}
-        onChange={handleCountsChange}
-        landmarksAvailable={!!landmarks}
-        reviewed={reviewed}
-        onReviewedChange={setReviewed}
-      />
-
-      <div className="flex items-center justify-between rounded-2xl border border-line bg-panel panel-elevated px-6 py-4">
+      <div className="scan-confirm-bar">
         <p className="text-xs text-muted">
           {saveStatus === "pending" &&
             (needsReview
@@ -351,10 +353,20 @@ export default function Dashboard({
             disabled={saveStatus === "saving" || needsReview}
             className="shrink-0 rounded-lg bg-ink text-paper text-sm font-medium px-4 py-2 disabled:opacity-60"
           >
-            {saveStatus === "saving" ? "Saving…" : saveStatus === "error" ? "Retry" : "Confirm & Save"}
+            {saveStatus === "saving" ? "Saving…" : saveStatus === "error" ? "Retry" : "Confirm counts & save"}
           </button>
         )}
       </div>
+
+      <section className="severity-results-card" aria-labelledby="severity-title">
+        <div className="severity-results-heading">
+          <span className="severity-results-icon" aria-hidden="true">✧</span>
+          <h2 id="severity-title">Overall severity</h2>
+        </div>
+        <SeverityMeter
+          overallSeverity={overall.overallSeverity}
+        />
+      </section>
 
       {previousScan && (
         <ImprovementInsights
@@ -395,21 +407,6 @@ export default function Dashboard({
             className="focus-ring text-sm font-medium underline underline-offset-4 text-ink/70 hover:text-ink"
           >
             Scan another photo
-          </button>
-          <button
-            onClick={handleDownloadReport}
-            className="focus-ring inline-flex items-center gap-2 rounded-full bg-ink text-paper px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-              <path
-                d="M12 16V4M12 16l-4-4M12 16l4-4M4 20h16"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            Download PDF report
           </button>
         </div>
       </div>

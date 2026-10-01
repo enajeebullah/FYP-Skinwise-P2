@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import UserMenu from "@/components/UserMenu";
 
-type AppSection = "dashboard" | "history" | "profile";
+type AppSection = "home" | "history" | "profile";
 
 interface NavigationItem {
   label: string;
@@ -25,7 +25,7 @@ const navigation: NavigationItem[] = [
   {
     label: "Dashboard",
     href: "/",
-    section: "dashboard",
+    section: "home",
     icon: (
       <path
         d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1V10Z"
@@ -42,16 +42,6 @@ const navigation: NavigationItem[] = [
       <>
         <path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
         <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.7" />
-      </>
-    ),
-  },
-  {
-    label: "Acne Detection",
-    href: "/#acne-detection",
-    icon: (
-      <>
-        <path d="M4 5h16v14H4z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
-        <path d="M8 9h8M8 12h8M8 15h4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
       </>
     ),
   },
@@ -131,7 +121,7 @@ export default function AppShell({
   return (
     <div className="app-shell">
       <aside className="app-sidebar">
-        <Link href="/" className="brand-lockup" aria-label="SkinWISE dashboard">
+        <Link href="/" className="brand-lockup" aria-label="SkinWISE home">
           <BrandMark className="brand-mark" />
           <span>
             <strong>SkinWISE</strong>

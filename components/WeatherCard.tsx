@@ -58,56 +58,93 @@ export default function WeatherCard({ onWeatherReady }: WeatherCardProps) {
   }, []);
 
   return (
-    <div className="rounded-2xl border border-line bg-panel panel-elevated p-6">
-      <p className="font-mono text-[11px] uppercase tracking-wider text-muted mb-3">
-        Live weather context
-      </p>
+    <div className="weather-dashboard-card">
+      <div className="weather-dashboard-heading">
+        <span className="weather-dashboard-heading-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M7 18h10a4 4 0 0 0 .4-8A5.5 5.5 0 0 0 7 9.5 4.3 4.3 0 0 0 7 18Z" />
+            <path d="m8 4 1 1.5M16 4l-1 1.5" />
+          </svg>
+        </span>
+        <h2>Live Weather Context</h2>
+        <span className="weather-info-mark" title="Weather adjusts skincare guidance when available." aria-label="Weather adjusts skincare guidance when available.">i</span>
+      </div>
 
       {status === "loading" && (
-        <p className="text-sm text-muted animate-pulseSoft">Reading local conditions…</p>
+        <div className="weather-loading" role="status">
+          <span className="weather-loading-orb" aria-hidden="true" />
+          <span>Reading local conditions…</span>
+        </div>
       )}
 
       {status === "done" && weather && (
         <>
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <p className="font-display text-2xl">{weather.temperatureC.toFixed(0)}°C</p>
-              <p className="text-xs text-muted mt-0.5">Temperature</p>
+          <div className="weather-metrics">
+            <div className="weather-metric weather-temperature">
+              <span className="weather-metric-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M14 14.8V5a3 3 0 0 0-6 0v9.8a5 5 0 1 0 6 0Z" />
+                  <path d="M11 12v6" />
+                </svg>
+              </span>
+              <span className="weather-metric-copy">
+                <strong>{weather.temperatureC.toFixed(0)}°C</strong>
+                <small>Temperature</small>
+              </span>
             </div>
-            <div>
-              <p className="font-display text-2xl">{weather.humidityPct.toFixed(0)}%</p>
-              <p className="text-xs text-muted mt-0.5">Humidity</p>
+            <div className="weather-metric weather-humidity">
+              <span className="weather-metric-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M12 3s6 6.5 6 11a6 6 0 1 1-12 0c0-4.5 6-11 6-11Z" />
+                  <path d="M9 15a3 3 0 0 0 3 3" />
+                </svg>
+              </span>
+              <span className="weather-metric-copy">
+                <strong>{weather.humidityPct.toFixed(0)}%</strong>
+                <small>Humidity</small>
+              </span>
             </div>
-            <div>
-              <p className="font-display text-2xl">{weather.uvIndex.toFixed(1)}</p>
-              <p className="text-xs text-muted mt-0.5">UV index · {uvRiskLabel(weather.uvIndex)}</p>
+            <div className="weather-metric weather-uv">
+              <span className="weather-metric-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="4" />
+                  <path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+                </svg>
+              </span>
+              <span className="weather-metric-copy">
+                <strong>{weather.uvIndex.toFixed(1)}</strong>
+                <small>UV Index · {uvRiskLabel(weather.uvIndex)} risk</small>
+              </span>
+            </div>
+            <div className="weather-illustration" aria-hidden="true">
+              <span className="weather-sun" />
+              <span className="weather-cloud" />
             </div>
           </div>
 
-          <div className="mt-5 pt-4 border-t border-line/60">
-            <p className="text-xs font-mono uppercase tracking-wide text-muted mb-2">
-              Today&rsquo;s advice
-            </p>
-            <ul className="space-y-1">
+          <div className="weather-advice">
+            <span className="weather-advice-icon" aria-hidden="true">☼</span>
+            <div>
+              <p>Today&rsquo;s Advice</p>
+              <ul>
               {weatherAdvice(weather).map((line, i) => (
-                <li key={i} className="text-sm text-ink/75">
-                  • {line}
-                </li>
+                  <li key={i}>{line}</li>
               ))}
-            </ul>
+              </ul>
+            </div>
           </div>
         </>
       )}
 
       {status === "denied" && (
-        <div>
-          <p className="text-sm text-ink/75">
+        <div className="weather-unavailable">
+          <p>
             Location access was declined, so the routine below uses skin-type
             and severity only (no weather adjustment).
           </p>
           <button
             onClick={requestWeather}
-            className="focus-ring mt-3 text-sm font-medium underline underline-offset-4"
+            className="focus-ring"
           >
             Allow location access
           </button>
@@ -115,14 +152,14 @@ export default function WeatherCard({ onWeatherReady }: WeatherCardProps) {
       )}
 
       {status === "error" && (
-        <div>
-          <p className="text-sm text-ink/75">
+        <div className="weather-unavailable">
+          <p>
             Couldn&rsquo;t reach the weather service. The routine below skips
             weather adjustment.
           </p>
           <button
             onClick={requestWeather}
-            className="focus-ring mt-3 text-sm font-medium underline underline-offset-4"
+            className="focus-ring"
           >
             Try again
           </button>

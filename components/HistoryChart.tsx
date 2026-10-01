@@ -1,172 +1,134 @@
+import type { OverallSeverity } from "@/lib/overallSeverity";
+
 type HistoryChartPoint = {
   date: string;
-  score: number;
+  severity: OverallSeverity;
 };
 
 interface HistoryChartProps {
   points: HistoryChartPoint[];
 }
 
-function formatXLabel(dateStr: string, allSameDay: boolean): string {
-  const d = new Date(dateStr);
-  if (allSameDay) {
-    return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  }
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+const SEVERITY_ORDER: OverallSeverity[] = ["clear", "mild", "moderate", "severe"];
+
+function formatXLabel(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
 }
 
-/**
- * Zooms the Y-axis to the actual data range (with padding and a sane
- * minimum span) so genuine ups/downs are visible, rather than flattening
- * everything against a fixed 0–32 axis — the same approach fitness/health
- * trend charts commonly use. The axis labels always show the true values,
- * so this stays honest rather than hiding the zoom.
- */
-function computeYDomain(scores: number[]): [number, number] {
-  const rawMin = Math.min(...scores);
-  const rawMax = Math.max(...scores);
-  const span = rawMax - rawMin;
-  const pad = Math.max(span * 0.4, 2);
-
-  let yMin = Math.max(0, Math.floor(rawMin - pad));
-  let yMax = Math.ceil(rawMax + pad);
-
-  const MIN_SPAN = 6;
-  if (yMax - yMin < MIN_SPAN) {
-    const mid = (yMax + yMin) / 2;
-    yMin = Math.max(0, Math.round(mid - MIN_SPAN / 2));
-    yMax = Math.round(mid + MIN_SPAN / 2);
-  }
-  return [yMin, yMax];
+function severityRank(severity: OverallSeverity): number {
+  return SEVERITY_ORDER.indexOf(severity);
 }
 
 export default function HistoryChart({ points }: HistoryChartProps) {
   if (points.length < 2) {
     return (
-      <p className="text-sm text-muted">
-        Scan at least twice to see your total lesion count trend over time.
-      </p>
+      <div className="history-chart-empty">
+        <span aria-hidden="true">↗</span>
+        <p>Complete at least two scans to see your severity trend.</p>
+      </div>
     );
   }
 
-  const width = 640;
-  const height = 220;
-  const padding = { top: 16, right: 16, bottom: 30, left: 34 };
-  const plotW = width - padding.left - padding.right;
-  const plotH = height - padding.top - padding.bottom;
+  const visiblePoints = points.slice(-7);
+  const width = 720;
+  const height = 174;
+  const padding = { top: 13, right: 18, bottom: 26, left: 53 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const toXY = (index: number, severity: OverallSeverity) => ({
+    x: padding.left + (index * plotWidth) / Math.max(visiblePoints.length - 1, 1),
+    y: padding.top + plotHeight - (severityRank(severity) * plotHeight) / 3,
+  });
 
-  const [yMin, yMax] = computeYDomain(points.map((p) => p.score));
-  const yRange = yMax - yMin;
-
-  const xStep = points.length > 1 ? plotW / (points.length - 1) : 0;
-  const toXY = (i: number, score: number) => {
-    const x = padding.left + i * xStep;
-    const y = padding.top + plotH - ((score - yMin) / yRange) * plotH;
-    return [x, y] as const;
-  };
-
-  const linePath = points
-    .map((p, i) => {
-      const [x, y] = toXY(i, p.score);
-      return `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
-    .join(" ");
-
-  const [firstX] = toXY(0, points[0].score);
-  const [lastX] = toXY(points.length - 1, points[points.length - 1].score);
-  const baselineY = padding.top + plotH;
-  const areaPath = `${linePath} L ${lastX.toFixed(1)} ${baselineY} L ${firstX.toFixed(1)} ${baselineY} Z`;
-
-  const latestScore = points[points.length - 1].score;
-  const lineColor = "#B23A48";
-
-  const allSameDay = points.every(
-    (p) => new Date(p.date).toDateString() === new Date(points[0].date).toDateString()
+  const coords = visiblePoints.map((point, index) =>
+    toXY(index, point.severity)
   );
-
-  // 5 evenly spaced ticks across the zoomed domain (not fixed 0/25/50/75/100).
-  const gridValues = Array.from({ length: 5 }, (_, i) =>
-    Math.round(yMin + (yRange * i) / 4)
-  );
-  const gradientId = "history-chart-fill";
-
-  // Thin out x-axis labels so they don't overlap when there are many scans —
-  // show at most ~6 evenly spaced labels.
-  const labelStep = Math.max(1, Math.ceil(points.length / 6));
+  const curve = coords.reduce((path, point, index) => {
+    if (index === 0) return `M ${point.x} ${point.y}`;
+    const previous = coords[index - 1];
+    const middleX = (previous.x + point.x) / 2;
+    return `${path} Q ${middleX} ${previous.y} ${middleX} ${(previous.y + point.y) / 2} T ${point.x} ${point.y}`;
+  }, "");
+  const first = coords[0];
+  const last = coords[coords.length - 1];
+  const baseY = padding.top + plotHeight;
+  const area = `${curve} L ${last.x} ${baseY} L ${first.x} ${baseY} Z`;
+  const gradientId = "history-severity-fill";
 
   return (
-    <div>
-      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-56">
+    <div className="history-chart">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="Severity trend over your recent scans"
+        className="history-chart-svg"
+      >
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={lineColor} stopOpacity="0.22" />
-            <stop offset="100%" stopColor={lineColor} stopOpacity="0" />
+            <stop offset="0%" stopColor="#FF9B37" stopOpacity=".19" />
+            <stop offset="100%" stopColor="#FF9B37" stopOpacity="0" />
           </linearGradient>
         </defs>
 
-        {/* Gridlines + Y-axis labels */}
-        {gridValues.map((v, i) => {
-          const y = padding.top + plotH - ((v - yMin) / yRange) * plotH;
+        {SEVERITY_ORDER.map((severity, index) => {
+          const y = padding.top + plotHeight - (index * plotHeight) / 3;
+          const label = severity.charAt(0).toUpperCase() + severity.slice(1);
           return (
-            <g key={i}>
+            <g key={severity}>
               <line
                 x1={padding.left}
                 y1={y}
                 x2={width - padding.right}
                 y2={y}
-                stroke="#E6E0D6"
+                stroke="#EDF0F7"
                 strokeWidth="1"
               />
               <text
-                x={padding.left - 8}
+                x={padding.left - 10}
                 y={y + 3}
                 textAnchor="end"
                 fontSize="9"
-                fontFamily="var(--font-plex-mono), monospace"
-                fill="#8A8178"
+                fontFamily="var(--font-inter), sans-serif"
+                fill="#7886A1"
               >
-                {v}
+                {label}
               </text>
             </g>
           );
         })}
 
-        {/* X-axis date/time labels */}
-        {points.map((p, i) => {
-          if (i % labelStep !== 0 && i !== points.length - 1) return null;
-          const [x] = toXY(i, p.score);
-          return (
-            <text
-              key={i}
-              x={x}
-              y={height - 8}
-              textAnchor="middle"
-              fontSize="9"
-              fontFamily="var(--font-plex-mono), monospace"
-              fill="#8A8178"
-            >
-              {formatXLabel(p.date, allSameDay)}
-            </text>
-          );
-        })}
-
-        <path d={areaPath} fill={`url(#${gradientId})`} stroke="none" />
+        <path d={area} fill={`url(#${gradientId})`} />
         <path
-          d={linePath}
+          d={curve}
           fill="none"
-          stroke={lineColor}
+          stroke="#FF8D36"
           strokeWidth="2.5"
           strokeLinecap="round"
-          strokeLinejoin="round"
         />
-        {points.map((p, i) => {
-          const [x, y] = toXY(i, p.score);
-          return <circle key={i} cx={x} cy={y} r="3.5" fill={lineColor} />;
+
+        {visiblePoints.map((point, index) => {
+          const coord = coords[index];
+          return (
+            <g key={`${point.date}-${index}`}>
+              <circle cx={coord.x} cy={coord.y} r="5" fill="#fff" />
+              <circle cx={coord.x} cy={coord.y} r="3.4" fill="#FF8D36" />
+              <text
+                x={coord.x}
+                y={height - 5}
+                textAnchor="middle"
+                fontSize="8"
+                fontFamily="var(--font-inter), sans-serif"
+                fill="#8793AA"
+              >
+                {formatXLabel(point.date)}
+              </text>
+            </g>
+          );
         })}
       </svg>
-      <p className="text-[10px] font-mono text-muted/70 text-right -mt-1">
-        Scale zoomed to {yMin}–{yMax} to show day-to-day detail
-      </p>
     </div>
   );
 }

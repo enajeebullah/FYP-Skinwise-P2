@@ -68,15 +68,16 @@ export default function AuthForm({ mode }: AuthFormProps) {
 
   if (signupDone) {
     return (
-      <div className="rounded-2xl border border-line bg-panel panel-elevated p-8 text-center">
-        <p className="font-display text-xl">Check your inbox</p>
-        <p className="text-sm text-ink/70 mt-2">
+      <div className="auth-form-card auth-success">
+        <span className="auth-success-icon" aria-hidden="true">✓</span>
+        <p className="auth-success-title">Check your inbox</p>
+        <p className="auth-success-copy">
           We&rsquo;ve sent a confirmation link to <strong>{email}</strong>. Verify
           your email, then log in.
         </p>
         <a
           href="/login"
-          className="focus-ring inline-block mt-5 text-sm font-medium underline underline-offset-4"
+          className="auth-primary-button focus-ring inline-flex mt-5"
         >
           Go to login
         </a>
@@ -85,70 +86,78 @@ export default function AuthForm({ mode }: AuthFormProps) {
   }
 
   return (
-    <div className="rounded-2xl border border-line bg-panel panel-elevated p-8">
-      <form onSubmit={handleSubmit} className="space-y-4">
+    <div className="auth-form-card">
+      <form onSubmit={handleSubmit} className="auth-form">
         {mode === "signup" && (
-          <div>
-            <label className="text-xs font-mono uppercase tracking-wide text-muted">
+          <div className="auth-field">
+            <label htmlFor="full-name">
               Full name
             </label>
             <input
+              id="full-name"
               type="text"
+              autoComplete="name"
               required
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
-              className="focus-ring mt-1 w-full rounded-lg border border-line bg-paper px-3 py-2 text-sm"
+              className="focus-ring"
+              placeholder="Your name"
             />
           </div>
         )}
 
-        <div>
-          <label className="text-xs font-mono uppercase tracking-wide text-muted">
+        <div className="auth-field">
+          <label htmlFor="email">
             Email
           </label>
           <input
+            id="email"
             type="email"
+            autoComplete="email"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="focus-ring mt-1 w-full rounded-lg border border-line bg-paper px-3 py-2 text-sm"
+            className="focus-ring"
+            placeholder="you@example.com"
           />
         </div>
 
-        <div>
-          <label className="text-xs font-mono uppercase tracking-wide text-muted">
+        <div className="auth-field">
+          <label htmlFor="password">
             Password
           </label>
           <input
+            id="password"
             type="password"
+            autoComplete={mode === "login" ? "current-password" : "new-password"}
             required
             minLength={6}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="focus-ring mt-1 w-full rounded-lg border border-line bg-paper px-3 py-2 text-sm"
+            className="focus-ring"
+            placeholder={mode === "login" ? "Enter your password" : "At least 6 characters"}
           />
         </div>
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && <p className="auth-error" role="alert">{error}</p>}
 
         <button
           type="submit"
           disabled={loading}
-          className="focus-ring w-full rounded-full bg-ink text-paper py-2.5 text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
+          className="auth-primary-button focus-ring"
         >
           {loading ? "Please wait…" : mode === "login" ? "Log in" : "Create account"}
         </button>
       </form>
 
-      <div className="flex items-center gap-3 my-5">
-        <div className="h-px bg-line flex-1" />
-        <span className="text-xs text-muted">or</span>
-        <div className="h-px bg-line flex-1" />
+      <div className="auth-divider">
+        <span>or continue with</span>
       </div>
 
       <button
+        type="button"
         onClick={handleGoogle}
-        className="focus-ring w-full rounded-full border border-line py-2.5 text-sm font-medium hover:bg-paper transition-colors flex items-center justify-center gap-2"
+        className="auth-google-button focus-ring"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden>
           <path fill="#4285F4" d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47a5.53 5.53 0 0 1-2.4 3.63v3h3.88c2.27-2.09 3.54-5.17 3.54-8.87z" />
@@ -159,7 +168,7 @@ export default function AuthForm({ mode }: AuthFormProps) {
         Continue with Google
       </button>
 
-      <p className="text-center text-sm text-muted mt-6">
+      <p className="auth-switch">
         {mode === "login" ? (
           <>Don&rsquo;t have an account? <a href="/signup" className="underline underline-offset-4 text-ink">Sign up</a></>
         ) : (

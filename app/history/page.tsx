@@ -27,21 +27,12 @@ export default async function HistoryPage() {
       fullName={user.user_metadata?.full_name ?? null}
       pageTitle="Scan history"
     >
-      <div className="dashboard-content">
-        <div className="max-w-4xl mx-auto w-full space-y-8 py-6">
-          <div>
-            <p className="font-mono text-xs uppercase tracking-wider text-muted mb-2">
-              Progress tracking
-            </p>
-            <h1 className="font-display text-3xl">Your scan history</h1>
-          </div>
-
-          <HistoryView
-            initialScans={scans ?? []}
-            loadError={error?.message ?? null}
-            userId={user.id}
-          />
-        </div>
+      <div className="dashboard-content history-content">
+        <HistoryView
+          initialScans={scans ?? []}
+          loadError={error?.message ?? null}
+          userId={user.id}
+        />
       </div>
     </AppShell>
   );

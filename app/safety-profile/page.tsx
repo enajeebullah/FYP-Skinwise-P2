@@ -60,6 +60,13 @@ export default async function SafetyProfilePage({
           <p className="font-mono text-xs uppercase tracking-wider text-muted mb-2">
             {isOnboarding ? "Welcome to SkinWISE" : "Your account"}
           </p>
+          {isOnboarding && (
+            <ol className="onboarding-steps" aria-label="Onboarding progress">
+              <li className="complete"><span>✓</span> Account</li>
+              <li className="current" aria-current="step"><span>2</span> Safety profile</li>
+              <li><span>3</span> First scan</li>
+            </ol>
+          )}
           <h1 className="font-display text-3xl mb-2">
             {isOnboarding ? "Quick safety check, before your first scan" : "Safety profile"}
           </h1>

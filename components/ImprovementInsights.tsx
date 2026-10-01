@@ -28,37 +28,35 @@ export default function ImprovementInsights({
     severityDelta < 0 ? "#6F9A6A" : severityDelta > 0 ? "#B23A48" : "#221D24";
 
   return (
-    <div className="rounded-2xl border border-line bg-panel panel-elevated p-6 sm:p-8">
-      <p className="font-mono text-[11px] uppercase tracking-wider text-muted mb-4">
+    <section className="improvement-insights-card">
+      <p className="improvement-insights-kicker">
         Compared to your previous scan
       </p>
 
-      <div className="grid grid-cols-2 gap-6">
+      <div className="improvement-insights-grid">
         <div>
-          <p className="text-xs text-muted">Total lesions</p>
-          <p
-            className="font-display text-2xl mt-0.5"
+          <span>Total lesions</span>
+          <strong
             style={{ color: lesionDelta > 0 ? "#B23A48" : lesionDelta < 0 ? "#6F9A6A" : "#221D24" }}
           >
             {lesionDelta === 0 ? "No change" : `${lesionDelta > 0 ? "+" : ""}${lesionDelta}`}
-          </p>
+          </strong>
         </div>
         <div>
-          <p className="text-xs text-muted">Overall Severity</p>
-          <p
-            className="font-display text-2xl mt-0.5"
+          <span>Overall Severity</span>
+          <strong
             style={{ color: severityColor }}
           >
             {currentOverallSeverity.charAt(0).toUpperCase() + currentOverallSeverity.slice(1)}
-          </p>
+          </strong>
         </div>
       </div>
 
-      <p className="text-sm text-ink/70 mt-5">
+      <p className="improvement-insights-message">
         {severityDelta < 0 && "Your Overall Severity has improved since your previous scan."}
         {severityDelta > 0 && "Your Overall Severity has increased since your previous scan."}
         {severityDelta === 0 && "Your Overall Severity is unchanged since your previous scan."}
       </p>
-    </div>
+    </section>
   );
 }

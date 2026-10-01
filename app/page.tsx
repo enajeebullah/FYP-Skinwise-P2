@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import AppShell from "@/components/AppShell";
+import LandingPage from "@/components/LandingPage";
 import ScannerApp from "@/components/ScannerApp";
 
 export default async function Home() {
@@ -9,10 +10,9 @@ export default async function Home() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Middleware already redirects unauthenticated requests to /login, but
-  // this guard keeps the page safe even if middleware is ever bypassed.
+  // The root route is public; signed-out visitors see the landing page.
   if (!user) {
-    redirect("/login");
+    return <LandingPage />;
   }
 
   // First-time users are sent to the Safety Profile once, right after
@@ -30,7 +30,7 @@ export default async function Home() {
 
   return (
     <AppShell
-      activeSection="dashboard"
+      activeSection="home"
       email={user.email ?? ""}
       fullName={user.user_metadata?.full_name ?? null}
       pageTitle="Skin analysis"
@@ -38,10 +38,10 @@ export default async function Home() {
         <footer className="app-footer border-t border-line">
           <p className="text-xs text-muted">
             SkinWISE — Final Year Project, Faculty of Computing, Riphah
-            International University. This scanner runs entirely in your
-            browser; no photo leaves your device — only the summarised result
-            (skin type, lesion counts, severity, routine) is saved to your
-            account for progress tracking.
+            International University.             Your photo is processed by the configured SkinWISE analysis
+            service and is not saved to your account; only the summarised
+            result (skin type, lesion counts, severity, routine) is saved for
+            progress tracking.
           </p>
         </footer>
       }

@@ -209,6 +209,14 @@ export default function ScannerApp({ userId }: { userId: string }) {
             ) : (
               <CameraCapture onImageReady={handleImageReady} />
             )}
+            <div className="scanner-tips">
+              <p>For the clearest result</p>
+              <ul>
+                <li>Face the camera straight on in soft, even light.</li>
+                <li>Keep your face clear of filters, makeup, and obstructions.</li>
+                <li>Use a sharp, close-up photo with your full face in frame.</li>
+              </ul>
+            </div>
           </>
         )}
 

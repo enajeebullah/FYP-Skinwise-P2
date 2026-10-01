@@ -1,67 +1,64 @@
 "use client";
 
 import { OVERALL_SEVERITY_META, type OverallSeverity } from "@/lib/overallSeverity";
-import Tooltip from "./Tooltip";
 
 interface SeverityMeterProps {
   overallSeverity: OverallSeverity;
-  noduleCount: number;
 }
 
-const SEVERITY_STAGES: Exclude<OverallSeverity, "clear">[] = ["mild", "moderate", "severe"];
+const SEVERITY_STAGES: OverallSeverity[] = ["clear", "mild", "moderate", "severe"];
 
-export default function SeverityMeter({
-  overallSeverity,
-  noduleCount,
-}: SeverityMeterProps) {
+const SEVERITY_DESCRIPTIONS: Record<OverallSeverity, string> = {
+  clear: "No acne lesions were confirmed in this scan.",
+  mild: "Mild acne activity. Follow a consistent routine and track changes over time.",
+  moderate: "Moderate acne activity. Follow a consistent routine and track changes over time.",
+  severe: "Severe acne activity. Consider discussing your results with a healthcare professional.",
+};
+
+export default function SeverityMeter({ overallSeverity }: SeverityMeterProps) {
   const overallMeta = OVERALL_SEVERITY_META[overallSeverity];
-  const overallTooltip = "Overall Severity is calculated from your confirmed lesion counts and is used to tailor the routine below.";
+  const severityProgress = {
+    clear: 0,
+    mild: 34,
+    moderate: 67,
+    severe: 100,
+  }[overallSeverity];
 
   return (
-    <div>
-      <div className="flex items-center gap-1.5 mb-4">
-        <span
-          className="text-sm font-semibold rounded-full px-3 py-1 border"
-          style={{ backgroundColor: `${overallMeta.hex}1A`, color: overallMeta.hex, borderColor: `${overallMeta.hex}55` }}
-        >
-          Overall Severity: {overallMeta.label}
-        </span>
-        <Tooltip text={overallTooltip} />
+    <div
+      className="severity-visual"
+      style={{
+        "--severity-color": overallMeta.hex,
+        "--severity-progress": `${severityProgress}%`,
+      } as React.CSSProperties}
+    >
+      <div
+        className="severity-gauge"
+        role="img"
+        aria-label={`SkinWISE severity: ${overallMeta.label}`}
+      >
+        <span>{overallMeta.label}</span>
+        <small>SkinWISE Severity</small>
       </div>
-
-      {overallSeverity !== "clear" && (
-        <div className="mb-4">
-          <div className="relative h-2.5 rounded-full overflow-hidden flex">
-            {SEVERITY_STAGES.map((stage) => (
-              <div
-                key={stage}
-                className="h-full flex-1"
-                style={{
-                  backgroundColor: OVERALL_SEVERITY_META[stage].hex,
-                  opacity: stage === overallSeverity ? 1 : 0.28,
-                }}
-              />
-            ))}
-          </div>
-
-          <div className="flex mt-1.5 font-mono text-[9px] uppercase tracking-wide text-muted">
-            {SEVERITY_STAGES.map((stage, i) => (
-              <span
-                key={stage}
-                className={`flex-1 ${i === 0 ? "text-left" : i === SEVERITY_STAGES.length - 1 ? "text-right" : "text-center"}`}
-              >
-                {OVERALL_SEVERITY_META[stage].label}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {noduleCount > 0 && (
-        <p className="text-xs text-muted pt-3 border-t border-line/60">
-          {noduleCount} nodule{noduleCount === 1 ? "" : "s"} confirmed
-        </p>
-      )}
+      <div className="severity-visual-copy">
+        <h3>Overall Severity</h3>
+        <strong className="severity-result" style={{ color: overallMeta.hex }}>
+          {overallMeta.label}
+        </strong>
+        <p className="severity-summary-text">{SEVERITY_DESCRIPTIONS[overallSeverity]}</p>
+        <ol className="severity-scale" aria-label={`Severity scale, ${overallMeta.label} selected`}>
+          {SEVERITY_STAGES.map((stage) => (
+            <li
+              className={stage === overallSeverity ? "selected" : ""}
+              key={stage}
+              style={{ "--severity-color": OVERALL_SEVERITY_META[stage].hex } as React.CSSProperties}
+            >
+              <span />
+              <small>{OVERALL_SEVERITY_META[stage].label}</small>
+            </li>
+          ))}
+        </ol>
+      </div>
     </div>
   );
 }

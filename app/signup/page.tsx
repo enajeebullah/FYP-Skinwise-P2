@@ -3,16 +3,19 @@ import AuthForm from "@/components/AuthForm";
 
 export default function SignupPage() {
   return (
-    <main className="min-h-screen flex items-center justify-center px-6">
-      <div className="w-full max-w-sm">
-        <div className="flex items-center gap-2 justify-center mb-8">
-          <span className="h-2.5 w-2.5 rounded-full bg-gradient-to-r from-dry via-normal to-oily" />
-          <span className="font-display text-lg tracking-tight">SkinWISE</span>
-        </div>
-        <h1 className="font-display text-2xl text-center mb-6">Create your account</h1>
+    <main className="auth-page">
+      <div className="auth-card-wrap">
+        <a href="/" className="auth-brand">
+          <span className="auth-brand-mark" aria-hidden="true">✦</span>
+          SkinWISE
+        </a>
+        <p className="auth-eyebrow">A MORE PERSONAL SKINCARE JOURNEY</p>
+        <h1 className="auth-title">Create your account</h1>
+        <p className="auth-description">Start with a few details. Your skin insights are just around the corner.</p>
         <Suspense fallback={null}>
           <AuthForm mode="signup" />
         </Suspense>
+        <p className="auth-disclaimer">AI-assisted skin insights, always in your control.</p>
       </div>
     </main>
   );

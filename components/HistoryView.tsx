@@ -4,14 +4,51 @@ import { useMemo, useRef, useState } from "react";
 import HistoryChart from "@/components/HistoryChart";
 import { createClient } from "@/lib/supabase/client";
 import { ACNE_CLASS_META, ACNE_CLASS_ORDER } from "@/lib/constants";
-import { OVERALL_SEVERITY_META, type OverallSeverity } from "@/lib/overallSeverity";
+import {
+  OVERALL_SEVERITY_META,
+  type OverallSeverity,
+} from "@/lib/overallSeverity";
+
+const SEVERITY_ORDER: OverallSeverity[] = ["clear", "mild", "moderate", "severe"];
+type DateRange = "7" | "30" | "90" | "all";
+
+function isSeverity(value: string): value is OverallSeverity {
+  return SEVERITY_ORDER.includes(value as OverallSeverity);
+}
+
+function getSeverity(value: string): OverallSeverity {
+  return isSeverity(value) ? value : "clear";
+}
 
 function formatScanDate(dateStr: string): string {
-  const d = new Date(dateStr);
-  const isToday = d.toDateString() === new Date().toDateString();
-  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  if (isToday) return `Today, ${time}`;
-  return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}, ${time}`;
+  const date = new Date(dateStr);
+  const isToday = date.toDateString() === new Date().toDateString();
+  const time = date.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  if (isToday) return `Today · ${time}`;
+  return `${date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })} · ${time}`;
+}
+
+function formatShortDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function severityAverage(scans: ScanRow[]): OverallSeverity | null {
+  if (!scans.length) return null;
+  const average =
+    scans.reduce((sum, scan) => sum + SEVERITY_ORDER.indexOf(getSeverity(scan.overall_severity)), 0) /
+    scans.length;
+  return SEVERITY_ORDER[Math.round(average)];
 }
 
 // Matches the shape of a row in the `scans` table (see supabase/schema.sql).
@@ -31,8 +68,16 @@ interface HistoryViewProps {
   userId: string;
 }
 
-export default function HistoryView({ initialScans, loadError, userId }: HistoryViewProps) {
+export default function HistoryView({
+  initialScans,
+  loadError,
+  userId,
+}: HistoryViewProps) {
   const [scans, setScans] = useState<ScanRow[]>(initialScans);
+  const [severityFilter, setSeverityFilter] = useState<OverallSeverity | "all">(
+    "all"
+  );
+  const [dateRange, setDateRange] = useState<DateRange>("all");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [pendingDeleteAll, setPendingDeleteAll] = useState(false);
@@ -40,28 +85,57 @@ export default function HistoryView({ initialScans, loadError, userId }: History
   const latestScanRef = useRef<HTMLDetailsElement>(null);
 
   function viewLastScan() {
-    const el = latestScanRef.current;
-    if (!el) return;
-    el.open = true;
-    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    const element = latestScanRef.current;
+    if (!element) return;
+    element.open = true;
+    element.scrollIntoView({ behavior: "smooth", block: "start" });
   }
+
+  const visibleScans = useMemo(() => {
+    const cutoff =
+      dateRange === "all"
+        ? null
+        : Date.now() - Number(dateRange) * 24 * 60 * 60 * 1000;
+    return scans.filter((scan) => {
+      const matchesSeverity =
+        severityFilter === "all" ||
+        getSeverity(scan.overall_severity) === severityFilter;
+      const matchesDate =
+        cutoff === null || new Date(scan.created_at).getTime() >= cutoff;
+      return matchesSeverity && matchesDate;
+    });
+  }, [dateRange, scans, severityFilter]);
 
   const chartPoints = useMemo(
     () =>
-      scans
+      visibleScans
         .slice()
         .reverse()
-        .map((s) => ({ date: s.created_at, score: s.total_lesions })),
-    [scans]
+        .map((scan) => ({
+          date: scan.created_at,
+          severity: getSeverity(scan.overall_severity),
+        })),
+    [visibleScans]
   );
 
-  // "Best" here means the lowest total lesion count seen.
-  const scores = chartPoints.map((p) => p.score);
-  const bestScore = scores.length ? Math.min(...scores) : null;
-  const avgScore = scores.length
-    ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+  const average = severityAverage(scans);
+  const latestScan = scans[0] ?? null;
+  const firstSeverity = scans.length
+    ? SEVERITY_ORDER.indexOf(getSeverity(scans[scans.length - 1].overall_severity))
     : null;
-  const latestScore = scores.length ? scores[scores.length - 1] : null;
+  const latestSeverity = latestScan
+    ? SEVERITY_ORDER.indexOf(getSeverity(latestScan.overall_severity))
+    : null;
+  const trend =
+    firstSeverity === null || latestSeverity === null
+      ? "Just starting"
+      : latestSeverity < firstSeverity
+        ? "Improving"
+        : latestSeverity > firstSeverity
+          ? "Needs attention"
+          : "Steady";
+  const trendColor =
+    trend === "Improving" ? "#299A7A" : trend === "Needs attention" ? "#E17A68" : "#6675D9";
 
   async function confirmDelete(id: string) {
     setDeletingId(id);
@@ -73,13 +147,16 @@ export default function HistoryView({ initialScans, loadError, userId }: History
       console.error("Failed to delete scan:", error.message);
       return;
     }
-    setScans((prev) => prev.filter((s) => s.id !== id));
+    setScans((previous) => previous.filter((scan) => scan.id !== id));
   }
 
   async function confirmDeleteAll() {
     setDeletingAll(true);
     const supabase = createClient();
-    const { error } = await supabase.from("scans").delete().eq("user_id", userId);
+    const { error } = await supabase
+      .from("scans")
+      .delete()
+      .eq("user_id", userId);
     setDeletingAll(false);
     setPendingDeleteAll(false);
     if (error) {
@@ -90,227 +167,303 @@ export default function HistoryView({ initialScans, loadError, userId }: History
   }
 
   return (
-    <>
-      <div className="flex flex-wrap gap-3">
-        <button
-          onClick={viewLastScan}
-          disabled={scans.length === 0}
-          className="focus-ring inline-flex items-center gap-2 rounded-full border border-line px-4 py-2 text-sm font-medium hover:bg-paper transition-colors disabled:opacity-40"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-            <path
-              d="M12 8v4l3 2M21 12a9 9 0 1 1-3-6.7"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <path d="M21 3v5h-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    <div className="history-page">
+      <header className="history-hero">
+        <span className="history-hero-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M12 7v5l3 2" />
           </svg>
-          View Last Scan
-        </button>
-        <a
-          href="/"
-          className="focus-ring inline-flex items-center gap-2 rounded-full bg-ink text-paper px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-            <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          New Scan
-        </a>
-      </div>
-
-      <div className="rounded-2xl border border-line bg-panel panel-elevated p-6 sm:p-8">
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-2">
-          <p className="font-mono text-[11px] uppercase tracking-wider text-muted">
-            Total lesions over time
-          </p>
-          {bestScore !== null && (
-            <div className="flex items-center gap-5 font-mono text-[11px]">
-              <span className="text-muted">
-                Best <span className="text-ink font-medium">{bestScore}</span>
-              </span>
-              <span className="text-muted">
-                Average <span className="text-ink font-medium">{avgScore}</span>
-              </span>
-              <span className="text-muted">
-                Latest{" "}
-                <span className="font-medium text-ink">{latestScore}</span>
-              </span>
-            </div>
-          )}
+        </span>
+        <div>
+          <p>SCAN HISTORY</p>
+          <h1>Your Scan History</h1>
+          <span>View and track your previous scans and skin progress over time.</span>
         </div>
-        <HistoryChart points={chartPoints} />
-      </div>
+        <div className="history-hero-art" aria-hidden="true">
+          <span className="history-art-orbit" />
+          <span className="history-art-card history-art-card-back">◉</span>
+          <span className="history-art-card history-art-card-front">✦</span>
+          <span className="history-art-caption">Better<br />Skin Journey ♡</span>
+        </div>
+      </header>
 
       {loadError && (
-        <p className="text-sm text-red-600">Couldn&rsquo;t load your history: {loadError}</p>
+        <p className="history-load-error" role="alert">
+          Couldn&rsquo;t load your history: {loadError}
+        </p>
       )}
 
-      {scans.length > 0 && (
-        <div className="flex justify-end">
-          {pendingDeleteAll ? (
-            <div className="flex items-center gap-3 text-sm">
-              <span className="text-ink/70">Delete all {scans.length} scans? This can&rsquo;t be undone.</span>
-              <button
-                onClick={confirmDeleteAll}
-                disabled={deletingAll}
-                className="focus-ring font-medium text-red-600 hover:underline disabled:opacity-50"
-              >
-                {deletingAll ? "Deleting…" : "Confirm delete all"}
-              </button>
-              <button
-                onClick={() => setPendingDeleteAll(false)}
-                className="focus-ring text-muted hover:text-ink"
-              >
-                Cancel
-              </button>
+      <section className="history-stat-grid" aria-label="Scan history summary">
+        <article className="history-stat-card history-stat-total">
+          <span className="history-stat-icon" aria-hidden="true">▧</span>
+          <div>
+            <p>Total Scans</p>
+            <strong>{scans.length}</strong>
+            <small>{scans.length ? "Your saved skin check-ins" : "Start with your first scan"}</small>
+          </div>
+        </article>
+        <article
+          className="history-stat-card history-stat-average"
+          title="Rounded mean of saved severity categories, ranked from Clear to Severe"
+        >
+          <span className="history-stat-icon" aria-hidden="true">✓</span>
+          <div>
+            <p>Avg. Severity</p>
+            <strong>{average ? OVERALL_SEVERITY_META[average].label : "—"}</strong>
+            <small>{scans.length ? `Across ${scans.length} scan${scans.length === 1 ? "" : "s"}` : "No scans yet"}</small>
+          </div>
+        </article>
+        <article className="history-stat-card history-stat-latest">
+          <span className="history-stat-icon" aria-hidden="true">▦</span>
+          <div>
+            <p>Latest Scan</p>
+            <strong className="history-stat-date">
+              {latestScan ? formatShortDate(latestScan.created_at) : "—"}
+            </strong>
+            <small style={{ color: latestScan ? OVERALL_SEVERITY_META[getSeverity(latestScan.overall_severity)].hex : undefined }}>
+              {latestScan ? OVERALL_SEVERITY_META[getSeverity(latestScan.overall_severity)].label : "Waiting for your first scan"}
+            </small>
+          </div>
+        </article>
+        <article
+          className="history-stat-card history-stat-trend"
+          title="Compares your oldest saved severity category with your latest"
+        >
+          <span className="history-stat-icon" aria-hidden="true">↗</span>
+          <div>
+            <p>Trend</p>
+            <strong style={{ color: trendColor }}>{trend}</strong>
+            <small>{scans.length > 1 ? "Compared with earlier scans" : "Need more scans to compare"}</small>
+          </div>
+        </article>
+      </section>
+
+      <section className="history-insights-grid">
+        <article className="history-panel history-trend-panel">
+          <div className="history-panel-heading">
+            <div>
+              <h2>Severity Trend</h2>
+              <p>How your skin severity changed over time</p>
             </div>
-          ) : (
-            <button
-              onClick={() => setPendingDeleteAll(true)}
-              className="focus-ring text-sm text-muted hover:text-red-600 underline underline-offset-4"
-            >
-              Delete all history
-            </button>
-          )}
-        </div>
-      )}
-
-      {scans.length === 0 && (
-        <div className="rounded-2xl border border-line bg-panel panel-elevated p-8 text-center">
-          <p className="text-sm text-ink/70">
-            No scans yet.{" "}
-            <a href="/" className="underline underline-offset-4">
-              Run your first scan
-            </a>{" "}
-            to start tracking your progress.
-          </p>
-        </div>
-      )}
-
-      <div className="space-y-3">
-        {scans.map((scan, index) => {
-          const overallMeta = OVERALL_SEVERITY_META[(scan.overall_severity as OverallSeverity) ?? "clear"];
-          const isPendingDelete = pendingDeleteId === scan.id;
-
-          return (
-            <details
-              key={scan.id}
-              ref={index === 0 ? latestScanRef : undefined}
-              className="group rounded-2xl border border-line bg-panel panel-elevated overflow-hidden hover:border-ink/20 transition-colors"
-            >
-              <summary
-                className="cursor-pointer list-none flex flex-wrap items-center justify-between gap-3 pl-4 pr-5 py-4"
-                style={{ borderLeft: `4px solid ${overallMeta.hex}` }}
+            <label className="history-range-select">
+              <span className="sr-only">Filter chart date range</span>
+              <select
+                value={dateRange}
+                onChange={(event) => setDateRange(event.target.value as DateRange)}
               >
-                <div className="flex items-center gap-4">
-                  <div
-                    className="shrink-0 rounded-full px-3 py-2 font-mono text-xs"
-                    style={{
-                      backgroundColor: `${overallMeta.hex}1A`,
-                      color: overallMeta.hex,
-                    }}
-                  >
-                    {scan.total_lesions} lesion{scan.total_lesions === 1 ? "" : "s"}
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium capitalize">
-                      {scan.skin_type} skin
-                    </p>
-                    <p className="text-xs text-muted mt-0.5">{formatScanDate(scan.created_at)}</p>
-                  </div>
-                </div>
+                <option value="7">Last 7 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="90">Last 90 days</option>
+                <option value="all">All scans</option>
+              </select>
+            </label>
+          </div>
+          <HistoryChart points={chartPoints} />
+        </article>
 
-                <div className="flex items-center gap-2">
-                  <span
-                    className="text-xs font-medium px-2.5 py-1 rounded-full"
-                    style={{ backgroundColor: `${overallMeta.hex}1A`, color: overallMeta.hex }}
-                  >
-                    Overall Severity: {overallMeta.label}
-                  </span>
-                  {isPendingDelete ? (
-                    <span
-                      className="flex items-center gap-1.5"
-                      onClick={(e) => e.preventDefault()}
-                    >
-                      <button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          confirmDelete(scan.id);
-                        }}
-                        disabled={deletingId === scan.id}
-                        className="focus-ring text-xs font-medium text-red-600 hover:underline disabled:opacity-50"
-                      >
-                        {deletingId === scan.id ? "Deleting…" : "Confirm delete"}
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setPendingDeleteId(null);
-                        }}
-                        className="focus-ring text-xs text-muted hover:text-ink"
-                      >
-                        Cancel
-                      </button>
-                    </span>
-                  ) : (
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setPendingDeleteId(scan.id);
-                      }}
-                      aria-label="Delete this scan"
-                      title="Delete this scan"
-                      className="focus-ring text-muted hover:text-red-600 p-1.5 rounded-full hover:bg-red-50 transition-colors"
-                    >
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
-                        <path
-                          d="M4 7h16M9 7V4h6v3m-9 0 1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"
-                          stroke="currentColor"
-                          strokeWidth="1.8"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
+        <aside className="history-panel history-filter-panel">
+          <div className="history-panel-heading">
+            <div>
+              <h2><span aria-hidden="true">▽</span> Filter History</h2>
+            </div>
+          </div>
+          <div className="history-filter-options" aria-label="Filter by severity">
+            {(["all", ...SEVERITY_ORDER] as const).map((severity) => (
+              <button
+                key={severity}
+                type="button"
+                className={severityFilter === severity ? "active" : ""}
+                aria-pressed={severityFilter === severity}
+                onClick={() => setSeverityFilter(severity)}
+              >
+                {severity === "all"
+                  ? "All"
+                  : OVERALL_SEVERITY_META[severity].label}
+              </button>
+            ))}
+          </div>
+          <div className="history-filter-range">
+            <span aria-hidden="true">▦</span>
+            {dateRange === "all" ? "All scan dates" : `Last ${dateRange} days`}
+            <span aria-hidden="true">⌄</span>
+          </div>
+          <div className="history-encouragement">
+            <span aria-hidden="true">✧</span>
+            <p>
+              <strong>{trend === "Improving" ? "Your skin is getting better!" : "Every scan tells a story."}</strong>
+              <small>Keep up with your routine and healthy habits.</small>
+            </p>
+          </div>
+        </aside>
+      </section>
+
+      <section className="history-list-panel">
+        <div className="history-list-heading">
+          <div>
+            <h2>Previous Scans</h2>
+            <p>{visibleScans.length} of {scans.length} scans</p>
+          </div>
+          <div className="history-list-actions">
+            <button
+              type="button"
+              onClick={viewLastScan}
+              disabled={visibleScans.length === 0}
+              className="history-view-last"
+            >
+              View latest
+            </button>
+            {scans.length > 0 && (
+              pendingDeleteAll ? (
+                <div className="history-delete-all-confirm">
+                  <span>Delete all {scans.length} scans?</span>
+                  <button type="button" onClick={confirmDeleteAll} disabled={deletingAll}>
+                    {deletingAll ? "Deleting…" : "Confirm"}
+                  </button>
+                  <button type="button" onClick={() => setPendingDeleteAll(false)}>Cancel</button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="history-delete-all"
+                  onClick={() => setPendingDeleteAll(true)}
+                >
+                  Delete all
+                </button>
+              )
+            )}
+          </div>
+        </div>
+
+        {scans.length === 0 ? (
+          <div className="history-empty">
+            <span aria-hidden="true">◷</span>
+            <h3>Your history starts here</h3>
+            <p>Complete a skin scan to begin tracking your progress over time.</p>
+            <a href="/">Start your first scan</a>
+          </div>
+        ) : visibleScans.length === 0 ? (
+          <div className="history-empty history-empty-filtered">
+            <p>No scans match these filters.</p>
+            <button
+              type="button"
+              onClick={() => {
+                setSeverityFilter("all");
+                setDateRange("all");
+              }}
+            >
+              Clear filters
+            </button>
+          </div>
+        ) : (
+          <div className="history-scan-list">
+            {visibleScans.map((scan, index) => {
+              const severity = getSeverity(scan.overall_severity);
+              const severityMeta = OVERALL_SEVERITY_META[severity];
+              const pending = pendingDeleteId === scan.id;
+              const counts = scan.lesion_counts ?? {};
+
+              return (
+                <details
+                  key={scan.id}
+                  ref={index === 0 ? latestScanRef : undefined}
+                  className="history-scan-row"
+                >
+                  <summary>
+                    <span className={`history-scan-avatar history-avatar-${severity}`} aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none">
+                        <path d="M12 3.5c-4 0-6.5 3.2-6.5 7.6v2.1c0 4.3 2.7 7.3 6.5 7.3s6.5-3 6.5-7.3v-2.1c0-4.4-2.5-7.6-6.5-7.6Z" />
+                        <path d="M6 9c1.1-3.7 3.1-5.5 6-5.5s4.9 1.8 6 5.5M9 12h.01M15 12h.01" />
                       </svg>
-                    </button>
-                  )}
-                </div>
-              </summary>
-
-              <div className="mx-5 mb-5 pt-4 border-t border-line grid sm:grid-cols-2 gap-6">
-                <div>
-                  <p className="text-xs font-mono uppercase tracking-wide text-muted mb-2">
-                    Lesion breakdown
-                  </p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {ACNE_CLASS_ORDER.map((cls) => (
-                      <p key={cls} className="text-sm">
-                        <span style={{ color: ACNE_CLASS_META[cls].hex }}>
-                          {ACNE_CLASS_META[cls].label}
+                    </span>
+                    <span className="history-scan-info">
+                      <span className="history-scan-date">{formatScanDate(scan.created_at)}</span>
+                      <span className="history-scan-type">◉ {scan.skin_type} skin</span>
+                    </span>
+                    <span className={`history-severity-pill history-severity-${severity}`}>
+                      <i /> {severityMeta.label}
+                    </span>
+                    <span className="history-row-counts">
+                      <span className="history-row-count-title">Lesion Count</span>
+                      {ACNE_CLASS_ORDER.map((cls) => (
+                        <span className="history-row-count" key={cls}>
+                          <i style={{ backgroundColor: ACNE_CLASS_META[cls].hex }} />
+                          {ACNE_CLASS_META[cls].label} {counts[cls] ?? 0}
                         </span>
-                        : {scan.lesion_counts?.[cls] ?? 0}
-                      </p>
-                    ))}
-                  </div>
-                </div>
+                      ))}
+                    </span>
+                    {pending ? (
+                      <span className="history-row-delete-confirm" onClick={(event) => event.preventDefault()}>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            confirmDelete(scan.id);
+                          }}
+                          disabled={deletingId === scan.id}
+                        >
+                          {deletingId === scan.id ? "Deleting…" : "Confirm"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setPendingDeleteId(null);
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </span>
+                    ) : (
+                      <>
+                        <span className="history-details-action" aria-hidden="true">View details</span>
+                        <button
+                          type="button"
+                          className="history-delete-button"
+                          aria-label={`Delete scan from ${formatScanDate(scan.created_at)}`}
+                          title="Delete this scan"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setPendingDeleteId(scan.id);
+                          }}
+                        >
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+                            <path d="M4 7h16M9 7V4h6v3m-9 0 1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </button>
+                      </>
+                    )}
+                  </summary>
 
-                <div>
-                  <p className="text-xs font-mono uppercase tracking-wide text-muted mb-2">
-                    Routine at the time
-                  </p>
-                  <p className="text-sm">{scan.routine?.cleanser}</p>
-                  <p className="text-sm">{scan.routine?.moisturizer}</p>
-                  <p className="text-sm">{scan.routine?.sunscreen}</p>
-                </div>
-              </div>
-            </details>
-          );
-        })}
-      </div>
-    </>
+                  <div className="history-scan-details">
+                    <div>
+                      <h3>Lesion breakdown</h3>
+                      <div className="history-detail-counts">
+                        {ACNE_CLASS_ORDER.map((cls) => (
+                          <span key={cls}>
+                            <i style={{ backgroundColor: ACNE_CLASS_META[cls].hex }} />
+                            {ACNE_CLASS_META[cls].label}: {counts[cls] ?? 0}
+                          </span>
+                        ))}
+                      </div>
+                      <p className="history-total-lesions">{scan.total_lesions} total lesions recorded</p>
+                    </div>
+                    <div>
+                      <h3>Routine at the time</h3>
+                      <p>{scan.routine?.cleanser || "No cleanser recorded"}</p>
+                      <p>{scan.routine?.moisturizer || "No moisturizer recorded"}</p>
+                      <p>{scan.routine?.sunscreen || "No sunscreen recorded"}</p>
+                    </div>
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </div>
   );
 }

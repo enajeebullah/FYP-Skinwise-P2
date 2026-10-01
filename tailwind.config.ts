@@ -8,11 +8,11 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        paper: "#F7F4EF",
-        ink: "#221D24",
+        paper: "#F5F7FC",
+        ink: "#27365D",
         panel: "#FFFFFF",
-        line: "#E6E0D6",
-        muted: "#8A8178",
+        line: "#E2E8F3",
+        muted: "#76839D",
         dry: {
           DEFAULT: "#C6875A",
           soft: "#F1DDCB",
