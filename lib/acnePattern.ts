@@ -1,6 +1,6 @@
 /**
  * Dominant acne-lesion pattern — determines which acne-care INGREDIENT
- * INFORMATION is relevant (e.g. salicylic acid for comedonal acne vs.
+ * INFORMATION is relevant (e.g. adapalene for comedonal acne vs.
  * benzoyl peroxide/azelaic acid for inflammatory acne). This is an
  * AUTHOR-DEFINED classification, not from a specific named clinical
  * source — disclosed as such (see README.md). It is deliberately simple
@@ -19,15 +19,23 @@ export interface AcnePatternResult {
  * All counts should be the user-CONFIRMED whole-face totals (see
  * ConfirmedCounts in lib/reviewCounts.ts).
  *
- * IMPORTANT: nodules do NOT affect pattern classification here — a case
- * with 25 papules/pustules and 1 nodule is still "inflammatory_dominant",
- * not overridden into a separate "nodule" pattern. An earlier version of
- * this logic let any nodule override the pattern entirely, which meant a
- * genuinely large inflammatory burden lost its evidence-based ingredient
- * guidance just because one nodule was also present. Nodules now
- * influence the recommendation ONLY through lib/overallSeverity.ts's
- * nodule-tier and the accompanying noduleNote — a distinct signal that
- * combines with (rather than silently overrides) the pattern below.
+ * Nodules count toward the INFLAMMATORY side of this comparison — NICE
+ * NG198 itself treats nodules as inflammatory lesions (its whole-face
+ * inflammatory count = papules + pustules + nodules). A case with only
+ * 1 nodule and nothing else is "inflammatory_dominant", not "clear" —
+ * "clear" would silently leave it with no ingredient guidance at all
+ * (see routineEngine.ts), which doesn't match how NICE treats a single
+ * nodule (still within its Mild-to-Moderate category, still gets
+ * standard topical guidance).
+ *
+ * This is DIFFERENT from an earlier, removed design where ANY nodule
+ * overrode the whole pattern into a separate "nodule_present" category
+ * regardless of a large papule/pustule count — that was a bug (it hid
+ * genuine inflammatory-acne guidance behind a single nodule). Here,
+ * nodules just add to the inflammatory side of a normal comedonal-vs-
+ * inflammatory comparison, nothing more. Nodule-specific severity impact
+ * and caution messaging still happen separately, in
+ * lib/overallSeverity.ts's nodule-tier and noduleNote.
  */
 export function determineAcnePattern(
   comedones: number,
@@ -35,32 +43,23 @@ export function determineAcnePattern(
   pustules: number,
   nodules: number
 ): AcnePatternResult {
-  const inflammatory = papules + pustules;
+  const inflammatory = papules + pustules + nodules;
   const total = comedones + inflammatory;
 
-  if (total === 0 && nodules === 0) {
+  if (total === 0) {
     return { pattern: "clear", reason: "No lesions detected." };
   }
-  if (total === 0 && nodules > 0) {
-    // Nodules only, nothing else to classify a comedonal/inflammatory
-    // pattern from — treated as "clear" for INGREDIENT-PATTERN purposes;
-    // the nodule itself is still fully accounted for via overallSeverity.
-    return { pattern: "clear", reason: "No comedones or inflammatory lesions detected (aside from nodules, handled separately)." };
-  }
 
-  // Simple majority comparison — no invented numeric threshold, since
-  // "dominant" here just means "the larger of the two non-nodule
-  // categories", disclosed plainly rather than dressed up as a cutoff.
   if (comedones > 0 && inflammatory === 0) {
     return {
       pattern: "comedonal_dominant",
-      reason: `${comedones} comedone${comedones === 1 ? "" : "s"} detected, with no papules or pustules — comedonal (clogged-pore) acne is the dominant pattern.`,
+      reason: `${comedones} comedone${comedones === 1 ? "" : "s"} detected, with no papules, pustules, or nodules — comedonal (clogged-pore) acne is the dominant pattern.`,
     };
   }
   if (inflammatory > 0 && comedones === 0) {
     return {
       pattern: "inflammatory_dominant",
-      reason: `${inflammatory} papule${inflammatory === 1 ? "" : "s"}/pustule${inflammatory === 1 ? "" : "s"} detected, with no comedones — inflammatory acne is the dominant pattern.`,
+      reason: `${inflammatory} inflammatory lesion${inflammatory === 1 ? "" : "s"} detected (papules/pustules/nodules), with no comedones — inflammatory acne is the dominant pattern.`,
     };
   }
   if (comedones >= inflammatory * 2) {

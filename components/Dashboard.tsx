@@ -382,7 +382,7 @@ export default function Dashboard({
       </div>
 
       <RoutineCard
-        id="routine"
+        id="recommendations"
         routine={routine}
         skinType={confirmedSkinType}
         overallSeverity={overall.overallSeverity}

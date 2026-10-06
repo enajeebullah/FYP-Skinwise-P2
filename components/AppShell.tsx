@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import UserMenu from "@/components/UserMenu";
 
-type AppSection = "home" | "history" | "profile";
+type AppSection = "home" | "history" | "profile" | "recommendations" | "routine";
 
 interface NavigationItem {
   label: string;
@@ -59,7 +59,8 @@ const navigation: NavigationItem[] = [
   },
   {
     label: "Recommendations",
-    href: "/#routine",
+    href: "/recommendations",
+    section: "recommendations",
     icon: (
       <path
         d="M8 7h8m-8 5h8m-8 5h5M5 4.5h14a1.5 1.5 0 0 1 1.5 1.5v12A1.5 1.5 0 0 1 19 19.5H5A1.5 1.5 0 0 1 3.5 18V6A1.5 1.5 0 0 1 5 4.5Z"
@@ -67,6 +68,17 @@ const navigation: NavigationItem[] = [
         strokeWidth="1.6"
         strokeLinejoin="round"
       />
+    ),
+  },
+  {
+    label: "Routine",
+    href: "/routine",
+    section: "routine",
+    icon: (
+      <>
+        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.7" />
+        <path d="M12 7v5l3 2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      </>
     ),
   },
   {

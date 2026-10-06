@@ -1,5 +1,5 @@
 import type { SkinClass, SafetyFlags } from "./constants";
-import { hasAnySafetyFlag, activeSafetyReasons } from "./constants";
+import { activeSafetyReasons } from "./constants";
 import type { WeatherData } from "./weather";
 import type { AcnePattern } from "./acnePattern";
 import type { OverallSeverity } from "./overallSeverity";
@@ -7,6 +7,22 @@ import type { OverallSeverity } from "./overallSeverity";
 export interface AcneCareItem {
   ingredient: string;
   reason: string;
+  /** Optional practical usage note (e.g. frequency to reduce irritation
+   *  risk) — shown separately from `reason`, which explains WHY the
+   *  ingredient was chosen, not HOW to use it. */
+  usageTip?: string;
+  /**
+   * When this ingredient should be applied — used by the Routine page to
+   * split steps into Morning/Evening sequences (never applied at the
+   * same time as another active on the same half-day, to reduce
+   * irritation and avoid actives deactivating each other).
+   *   - Adapalene (topical retinoid) → "PM" (sun-sensitising)
+   *   - Benzoyl peroxide (alone)     → "AM"
+   *   - Azelaic acid (alone or as a dry-skin substitute for BPO) → "AM"
+   *   - "Adapalene + Benzoyl peroxide" (ONE fixed-combination product,
+   *     not two separate steps) → "PM", applied once
+   */
+  timeOfDay: "AM" | "PM";
 }
 
 export interface Routine {
@@ -51,7 +67,7 @@ const SKIN_TYPE_LABEL: Record<SkinClass, string> = {
 
 /**
  * The acne-care ingredient matrix — Overall Severity × Pattern × Skin
- * Type. No cell is a fixed "always these 3 ingredients" list; each is
+ * Type. No cell is a fixed "always these ingredients" list; each is
  * chosen and disclosed individually (see README.md's full traceability
  * table):
  *
@@ -59,18 +75,29 @@ const SKIN_TYPE_LABEL: Record<SkinClass, string> = {
  *     principle: mild acne doesn't need combination therapy).
  *   - Moderate → a topical COMBINATION. Where the combination is
  *     Adapalene+Benzoyl peroxide, that pairing is NICE NG198's own
- *     literal "any severity" first-line option (verified against the
- *     guideline's Table 1) — it is NOT invented.
- *   - Dry skin substitutes Benzoyl peroxide for Azelaic acid: this
- *     substitution is a SkinWISE clinical-reasoning extension (BPO's
- *     drying/irritant profile is well documented, and NICE itself lists
- *     azelaic acid as a valid alternative when a first-line option isn't
- *     tolerated) — not a NICE-specified skin-type rule, since NICE
+ *     literal "any severity" first-line option — it is NOT invented,
+ *     and is applied UNIFORMLY across every moderate pattern (comedonal,
+ *     inflammatory, mixed), not just inflammatory — there's no clinical
+ *     basis to treat moderate-comedonal differently from
+ *     moderate-inflammatory/mixed on this specific point.
+ *   - Dry skin substitutes Benzoyl peroxide for Azelaic acid, at BOTH
+ *     Mild and Moderate, for EVERY pattern — one single, consistent
+ *     substitution rule. This is a SkinWISE clinical-reasoning extension
+ *     (BPO's drying/irritant profile is well documented, and NICE itself
+ *     lists azelaic acid as a valid alternative when a first-line option
+ *     isn't tolerated) — not a NICE-specified skin-type rule, since NICE
  *     doesn't stratify by cosmetic skin type at all. Disclosed as such.
  *   - Salicylic acid is deliberately NOT used as a primary choice — a
  *     Cochrane review found it a less effective comedolytic agent than
  *     topical retinoids, so it isn't given equal footing with Adapalene.
  *   - Severe → no ingredients at all; see generateRoutine() below.
+ *
+ * Every item also carries a `timeOfDay` ("AM" | "PM") — see the
+ * AcneCareItem interface above — so the Routine page can split a
+ * two-ingredient combination (e.g. Adapalene + Azelaic acid) into
+ * separate Morning/Evening steps instead of applying both actives at
+ * once, while a genuine single fixed-combination PRODUCT (Adapalene +
+ * Benzoyl peroxide) stays as one PM step.
  */
 function acneCareForNonSevere(
   pattern: AcnePattern,
@@ -81,12 +108,15 @@ function acneCareForNonSevere(
 
   if (pattern === "clear") return [];
 
-  if (severity === "clear" || severity === "mild") {
+  if (severity === "mild") {
     if (pattern === "comedonal_dominant" || pattern === "mixed") {
       return [
         {
           ingredient: "Adapalene (topical retinoid)",
-          reason: "A single evidence-supported topical retinoid is generally sufficient for a mild, comedonal-leaning pattern — AAD guidance reserves combination therapy for moderate acne and above.",
+          reason:
+            "A single evidence-supported topical retinoid is generally sufficient for a mild, comedonal-leaning pattern — AAD guidance reserves combination therapy for moderate acne and above.",
+          usageTip: dry ? "Start with every other night to reduce irritation risk on dry skin." : undefined,
+          timeOfDay: "PM",
         },
       ];
     }
@@ -95,39 +125,44 @@ function acneCareForNonSevere(
       return [
         {
           ingredient: "Azelaic acid",
-          reason: "Azelaic acid is used here instead of benzoyl peroxide because the predicted skin type is Dry — benzoyl peroxide's drying/irritant profile makes it a less comfortable single-agent choice on dry skin.",
+          reason:
+            "Azelaic acid is used here instead of benzoyl peroxide because the predicted skin type is Dry — benzoyl peroxide's drying/irritant profile makes it a less comfortable single-agent choice on dry skin.",
+          timeOfDay: "AM",
         },
       ];
     }
     return [
       {
         ingredient: "Benzoyl peroxide",
-        reason: "A single agent is generally sufficient for a mild, inflammatory-leaning pattern. Benzoyl peroxide is an evidence-supported monotherapy option for acne.",
+        reason:
+          "A single agent is generally sufficient for a mild, inflammatory-leaning pattern. Benzoyl peroxide is an evidence-supported monotherapy option for acne.",
+        timeOfDay: "AM",
       },
     ];
   }
 
-  // moderate
-  if (pattern === "comedonal_dominant") {
-    return [
-      { ingredient: "Adapalene (topical retinoid)", reason: "First-line topical retinoid for the comedonal component of a moderate case." },
-      { ingredient: "Azelaic acid", reason: "Added for its comedolytic and anti-inflammatory properties, giving a two-mechanism combination appropriate for moderate severity." },
-    ];
-  }
-  // inflammatory_dominant or mixed
+  // moderate — ONE substitution rule (dry → azelaic), applied uniformly
+  // across every pattern, rather than special-casing comedonal.
   if (dry) {
     return [
-      { ingredient: "Adapalene (topical retinoid)", reason: "A first-line topical retinoid, combined with another topical treatment for moderate acne." },
+      {
+        ingredient: "Adapalene (topical retinoid)",
+        reason: "First-line topical retinoid, combined with a second topical for moderate acne.",
+        timeOfDay: "PM",
+      },
       {
         ingredient: "Azelaic acid",
-        reason: "Used in place of benzoyl peroxide because the predicted skin type is Dry, to reduce the irritation risk of a two-active combination.",
+        reason:
+          "Used in place of benzoyl peroxide because the predicted skin type is Dry, to reduce the irritation risk of a two-active combination.",
+        timeOfDay: "AM",
       },
     ];
   }
   return [
     {
       ingredient: "Adapalene + Benzoyl peroxide (fixed combination)",
-      reason: "This first-line fixed-combination option is well-matched to a moderate, inflammatory-leaning pattern.",
+      reason: "This first-line fixed-combination option is well-matched to moderate acne, regardless of comedonal or inflammatory emphasis.",
+      timeOfDay: "PM",
     },
   ];
 }
@@ -168,26 +203,46 @@ export function generateRoutine({
     cleanserReason = `Because the predicted skin type is ${skinLabel}, a gentle balanced cleanser is generally suitable for routine maintenance.`;
   }
 
-  // ── Moisturizer (skin-type base, weather-adjusted) ───────────────────────
+  // ── Moisturizer (SKIN TYPE FIRST, humidity as a modifier — not the
+  // other way around. Dry skin always gets a richer base regardless of
+  // humidity, since barrier issues aren't resolved by ambient moisture
+  // alone. Oily skin never jumps to a heavy cream just because humidity
+  // is low, since that risks clogging acne-prone pores — it gets an
+  // in-between "hydrating gel-cream" instead. Only Normal skin lets
+  // humidity fully decide between a lotion and a richer cream.) ─────────
   let moisturizer: string;
   let moisturizerReason: string;
   const humidity = weather?.humidityPct;
-  if (skinType === "oily" && (humidity === undefined || humidity >= 50)) {
-    moisturizer = "Lightweight, oil-free / non-comedogenic gel moisturizer";
-    moisturizerReason =
-      humidity !== undefined
-        ? `Because the predicted skin type is ${skinLabel} and current humidity is ${humidity}%, a lightweight, oil-free formula is generally suitable to avoid adding unnecessary oil in already humid air.`
-        : `Because the predicted skin type is ${skinLabel}, a lightweight, oil-free formula is generally suitable.`;
-  } else if (skinType === "dry" || (humidity !== undefined && humidity < 35)) {
+
+  if (skinType === "dry") {
     moisturizer = "More hydrating, ceramide-based cream moisturizer";
     moisturizerReason =
-      humidity !== undefined && humidity < 35
-        ? `Because current humidity is low (${humidity}%), a more hydrating formula is generally suitable to help support the skin's moisture barrier.`
+      humidity !== undefined && humidity >= 50
+        ? `Because the predicted skin type is ${skinLabel}, a richer formula is still generally suitable even in today's higher humidity (${humidity}%) — dry skin's barrier needs aren't fully met by ambient moisture alone.`
+        : humidity !== undefined && humidity < 35
+        ? `Because the predicted skin type is ${skinLabel} and current humidity is low (${humidity}%), a more hydrating formula is generally suitable to help support the skin's moisture barrier.`
         : `Because the predicted skin type is ${skinLabel}, a more hydrating formula is generally suitable to help support the skin's moisture barrier.`;
+  } else if (skinType === "oily") {
+    if (humidity !== undefined && humidity < 35) {
+      moisturizer = "Lightweight, hydrating gel-cream (oil-free)";
+      moisturizerReason = `Current humidity is low (${humidity}%), but the predicted skin type is ${skinLabel} — a lightweight, hydrating gel-cream adds moisture without the heaviness of a rich cream, which could clog pores on oily, acne-prone skin.`;
+    } else {
+      moisturizer = "Lightweight, oil-free / non-comedogenic gel moisturizer";
+      moisturizerReason =
+        humidity !== undefined
+          ? `Because the predicted skin type is ${skinLabel} and current humidity is ${humidity}%, a lightweight, oil-free formula is generally suitable to avoid adding unnecessary oil.`
+          : `Because the predicted skin type is ${skinLabel}, a lightweight, oil-free formula is generally suitable.`;
+    }
   } else {
-    moisturizer = "Lightweight, non-comedogenic lotion moisturizer";
-    moisturizerReason =
-      "Given a balanced skin type and current weather conditions, a standard non-comedogenic lotion is generally suitable to maintain hydration without excess weight.";
+    // Normal skin — humidity genuinely decides here
+    if (humidity !== undefined && humidity < 35) {
+      moisturizer = "More hydrating, ceramide-based cream moisturizer";
+      moisturizerReason = `Current humidity is low (${humidity}%) — a more hydrating formula is generally suitable to help support the skin's moisture barrier.`;
+    } else {
+      moisturizer = "Lightweight, non-comedogenic lotion moisturizer";
+      moisturizerReason =
+        "Given a balanced skin type and current weather conditions, a standard non-comedogenic lotion is generally suitable to maintain hydration without excess weight.";
+    }
   }
 
   // ── Sunscreen (skin type + UV) ────────────────────────────────────────────
@@ -227,7 +282,9 @@ export function generateRoutine({
       acneCare = [
         {
           ingredient: "No acne-care ingredient needed",
-          reason: "No active comedonal or inflammatory lesions were confirmed, so no acne-specific ingredient guidance is needed right now. Continue your regular cleanser, moisturizer, and sunscreen routine.",
+          reason:
+            "No active comedonal or inflammatory lesions were confirmed, so no acne-specific ingredient guidance is needed right now. Continue your regular cleanser, moisturizer, and sunscreen routine.",
+          timeOfDay: "AM",
         },
       ];
     }
@@ -258,7 +315,7 @@ export function generateRoutine({
     finalMoisturizerReason = pauseNotice;
     finalSunscreen = "Recommendation paused";
     finalSunscreenReason = pauseNotice;
-    finalAcneCare = [{ ingredient: "Recommendation paused", reason: pauseNotice }];
+    finalAcneCare = [{ ingredient: "Recommendation paused", reason: pauseNotice, timeOfDay: "AM" }];
   }
 
   const reasons = {
