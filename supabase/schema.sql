@@ -98,3 +98,7 @@ create policy "Users can delete their own scans"
 
 create index if not exists scans_user_id_created_at_idx
   on public.scans (user_id, created_at desc);
+
+-- ─── Online dermatologist consultations ────────────────────────────────
+-- Admin provisioning, appointment policies, and doctor management are
+-- documented in migration_add_consultations.sql.

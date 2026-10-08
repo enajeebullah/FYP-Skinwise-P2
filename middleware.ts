@@ -32,6 +32,16 @@ export async function middleware(request: NextRequest) {
 
   const isPublicPath = PUBLIC_PATHS.some((p) => request.nextUrl.pathname.startsWith(p));
   const isInferenceApi = request.nextUrl.pathname.startsWith("/api/inference/");
+  const isAdminPath =
+    request.nextUrl.pathname === "/admin" ||
+    request.nextUrl.pathname.startsWith("/admin/");
+  const isAdminLoginPath = request.nextUrl.pathname === "/admin/login";
+
+  if (!user && isAdminPath && !isAdminLoginPath) {
+    const loginUrl = new URL("/admin/login", request.url);
+    loginUrl.searchParams.set("redirectTo", request.nextUrl.pathname);
+    return NextResponse.redirect(loginUrl);
+  }
 
   if (!user && !isPublicPath && !isInferenceApi) {
     const loginUrl = new URL("/login", request.url);

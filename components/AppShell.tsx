@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import UserMenu from "@/components/UserMenu";
 
-type AppSection = "home" | "history" | "profile" | "recommendations" | "routine";
+type AppSection = "home" | "history" | "profile" | "recommendations" | "routine" | "consultations";
 
 interface NavigationItem {
   label: string;
@@ -100,6 +100,17 @@ const navigation: NavigationItem[] = [
       <>
         <circle cx="12" cy="7" r="4" stroke="currentColor" strokeWidth="1.7" />
         <path d="M4 20c1-4 5-6 8-6s7 2 8 6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      </>
+    ),
+  },
+  {
+    label: "Consult Dermatologist",
+    href: "/consultations",
+    section: "consultations",
+    icon: (
+      <>
+        <path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H7l-3 2v-5.5a7.5 7.5 0 1 1 16-4Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+        <path d="M9 11h6M12 8v6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
       </>
     ),
   },

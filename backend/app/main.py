@@ -90,7 +90,9 @@ class ModelService:
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         options.intra_op_num_threads = max(1, min(os.cpu_count() or 1, 4))
 
-        self.skin_session = self._load_session(model_dir / "skinwise_model.onnx", options)
+        self.skin_session = self._load_session(
+            model_dir / "skinwise_mobilenetv2.onnx", options
+        )
         self.acne_session = self._load_session(model_dir / "acne_detector.onnx", options)
         self.face_session = self._load_session(model_dir / "face_detector.onnx", options)
         self.landmark_session = self._load_session(model_dir / "landmark_detector.onnx", options)
@@ -126,13 +128,22 @@ class ModelService:
 
         resized = image.resize((224, 224), Image.Resampling.BILINEAR)
         pixels = np.asarray(resized, dtype=np.float32)
-        tensor = (pixels / 127.5 - 1.0)[np.newaxis, ...]
+        pixels /= 255.0
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        tensor = ((pixels - mean) / std).transpose(2, 0, 1)[np.newaxis, ...]
         input_name = self.skin_session.get_inputs()[0].name
-        output = self.skin_session.run(None, {input_name: tensor})[0].reshape(-1)
-        if output.size < len(SKIN_CLASSES):
+        logits = self.skin_session.run(None, {input_name: tensor})[0].reshape(-1)
+        if logits.size < len(SKIN_CLASSES):
             raise RuntimeError("Skin model returned fewer scores than expected.")
 
-        scores = {name: float(output[index]) for index, name in enumerate(SKIN_CLASSES)}
+        logits = logits[: len(SKIN_CLASSES)]
+        probabilities = np.exp(logits - np.max(logits))
+        probabilities /= np.sum(probabilities)
+        scores = {
+            name: float(probabilities[index])
+            for index, name in enumerate(SKIN_CLASSES)
+        }
         top_class = max(SKIN_CLASSES, key=scores.__getitem__)
         return {
             "status": "ok",

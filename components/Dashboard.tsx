@@ -366,6 +366,22 @@ export default function Dashboard({
         <SeverityMeter
           overallSeverity={overall.overallSeverity}
         />
+        {overall.overallSeverity === "severe" && (
+          <div className="mt-5 rounded-xl border border-[#B23A48]/30 bg-[#B23A48]/[0.06] p-4">
+            <p className="text-sm font-medium text-[#8F2F3A]">
+              Dermatologist consultation is recommended.
+            </p>
+            <p className="mt-1 text-xs leading-5 text-ink/70">
+              This AI-assisted result is not a diagnosis. A dermatologist will independently evaluate your concerns.
+            </p>
+            <a
+              href="/consultations"
+              className="mt-3 inline-flex rounded-lg bg-[#175BB3] px-4 py-2 text-sm font-medium text-white hover:bg-[#124A91]"
+            >
+              Consult Dermatologist Online
+            </a>
+          </div>
+        )}
       </section>
 
       {previousScan && (

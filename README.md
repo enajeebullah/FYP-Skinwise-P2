@@ -89,13 +89,14 @@ directly to the public internet.
 1. **Account banayein**: https://supabase.com par jaayein → "Start your project" → GitHub/Google se sign up (free)
 2. **Naya project banayein**: "New Project" → naam dein (e.g. `skinwise`) → database password set karein → region select karein → "Create new project" (1-2 minute lagega provision hone mein)
 3. **Schema install karein**: project khulne ke baad, left sidebar mein **SQL Editor** par click karein → "New query" → is project ke `supabase/schema.sql` file ka **poora content copy-paste** karein → "Run" dabayein. Ye aapki `profiles` aur `scans` tables bana dega, security rules (RLS) ke saath.
-4. **API keys copy karein**: left sidebar mein **Project Settings → API** par jaayein. Wahan se `Project URL` aur `anon public` key copy karein.
-5. **`.env.local` file banayein**: project root mein `.env.local.example` ko copy kar ke `.env.local` banayein, aur upar wali values paste karein:
+4. **Consultation tables install karein**: `supabase/migration_add_consultations.sql` ka poora content SQL Editor mein run karein. RLS doctors aur appointments ki access control karta hai.
+5. **API keys copy karein**: left sidebar mein **Project Settings → API** par jaayein. Wahan se `Project URL` aur `anon public` key copy karein.
+6. **`.env.local` file banayein**: project root mein `.env.local.example` ko copy kar ke `.env.local` banayein, aur upar wali values paste karein:
    ```
    NEXT_PUBLIC_SUPABASE_URL=https://xxxxx.supabase.co
    NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGc...
    ```
-6. **Google sign-in enable karein (optional lekin recommended)**:
+7. **Google sign-in enable karein (optional lekin recommended)**:
    - Supabase dashboard mein **Authentication → Providers → Google** kholein, enable karein
    - Google Cloud Console (https://console.cloud.google.com) mein ek OAuth Client ID banayein (Web application type), aur authorized redirect URI mein Supabase ka diya hua callback URL paste karein (Supabase provider settings page par khud dikh jata hai)
    - Client ID aur Client Secret wapas Supabase ke Google provider settings mein paste kar ke save karein
@@ -114,6 +115,8 @@ Terminal mein ye output aayega:
 ```
 
 Browser mein `http://localhost:3000` kholein — app khul jayega.
+
+Admin setup ke liye app mein admin account register karein. Phir Supabase SQL Editor mein migration ke top par diya `admin_users` insert query run karein aur `admin@example.com` ko us account ke email se replace karein. Admin access alag table mein provision hota hai; user apne account se admin role nahi bana sakta. Ab `/admin` kholein.
 
 ### 6. Test karein
 
@@ -143,6 +146,8 @@ skinwise-app/
 │   ├── login/page.tsx      → login page
 │   ├── signup/page.tsx     → signup page
 │   ├── history/page.tsx    → past scans + total-lesion trend chart
+│   ├── admin/page.tsx      → admin-only management panel
+│   ├── consultations/page.tsx → dermatologist booking and appointment list
 │   ├── safety-profile/page.tsx → editable contraindication flags form
 │   └── auth/
 │       ├── callback/route.ts → handles Google OAuth redirect
@@ -174,6 +179,8 @@ skinwise-app/
 │   ├── TechnicalDetailsCard.tsx → collapsible model/inference-time/resolution details
 │   ├── AnalysisPipeline.tsx    → top-of-dashboard pipeline-stage checklist
 │   ├── Tooltip.tsx             → reusable (ⓘ) info tooltip for calculated metrics
+│   ├── AdminPanel.tsx          → admin dashboard and consultation management
+│   ├── ConsultationHub.tsx     → doctor directory, booking and patient appointments
 │   ├── HealthScoreRing.tsx→ 0–100 circular score
 │   ├── HistoryChart.tsx   → SVG line chart of total lesions over time
 │   ├── WeatherCard.tsx    → geolocation + live weather fetch
@@ -181,7 +188,8 @@ skinwise-app/
 ├── lib/
 │   ├── supabase/
 │   │   ├── client.ts      → Supabase client for Client Components (browser)
-│   │   └── server.ts      → Supabase client for Server Components/routes
+│   │   ├── server.ts      → Supabase client for Server Components/routes
+│   │   └── admin.ts       → server-side admin membership check
 │   ├── inferenceApi.ts    → typed client for authenticated Next.js inference routes
 │   ├── model.ts           → skin prediction response types and confidence helpers
 │   ├── acneModel.ts       → acne detection response types
@@ -197,6 +205,7 @@ skinwise-app/
 │   └── constants.ts       → class labels, colors, thresholds
 ├── supabase/
 │   ├── schema.sql          → paste into Supabase SQL Editor once (tables + RLS)
+│   ├── migration_add_consultations.sql → doctors, appointments, admin access + RLS
 │   ├── migration_simplify_severity.sql → drops method-specific scan columns; run on existing databases
 │   ├── migration_add_safety_profile.sql → run only if you set up Supabase before this update
 │   └── migration_add_onboarding.sql → run only if you set up Supabase before this update
