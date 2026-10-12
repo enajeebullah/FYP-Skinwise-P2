@@ -118,6 +118,10 @@ Browser mein `http://localhost:3000` kholein — app khul jayega.
 
 Admin setup ke liye app mein admin account register karein. Phir Supabase SQL Editor mein migration ke top par diya `admin_users` insert query run karein aur `admin@example.com` ko us account ke email se replace karein. Admin access alag table mein provision hota hai; user apne account se admin role nahi bana sakta. Ab `/admin` kholein.
 
+#### Appointment chat
+
+After `migration_add_consultations.sql`, run `supabase/migration_add_appointment_chat.sql` in the Supabase SQL Editor. The migration adds an appointment-linked message table with RLS: only the patient on the appointment and the Auth-linked assigned doctor can read or send messages, and only for confirmed or completed appointments. Message rows are read-only after insertion. Chat appears in both appointment views for those statuses.
+
 ### 6. Test karein
 
 - Browser mein `http://localhost:3000` khulte hi **login page** par redirect ho jayenge (kyunki abhi tak account nahi hai)

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import AppointmentChat from "@/components/AppointmentChat";
 
 type AppointmentStatus = "pending" | "confirmed" | "completed" | "cancelled" | "rejected";
 
@@ -57,6 +58,7 @@ export default function DoctorDashboard({
   doctorName: string;
 }) {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [openChatAppointmentId, setOpenChatAppointmentId] = useState<string | null>(null);
   const [meetingLinks, setMeetingLinks] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -146,7 +148,7 @@ export default function DoctorDashboard({
 
   return (
     <main className="min-h-screen bg-[#F8F9FD] px-5 py-10">
-      <div className="mx-auto max-w-4xl">
+      <div className={`mx-auto ${openChatAppointmentId ? "max-w-7xl" : "max-w-4xl"}`}>
         <header className="mb-6">
           <p className="eyebrow">SKINWISE DOCTOR</p>
           <h1 className="font-display text-3xl text-ink">{doctorName}</h1>
@@ -224,6 +226,33 @@ export default function DoctorDashboard({
                         Save consultation link
                       </button>
                     </div>
+                  )}
+
+                  {(appointment.status === "confirmed" || appointment.status === "completed") && (
+                    <>
+                      <button
+                        type="button"
+                        aria-expanded={openChatAppointmentId === appointment.id}
+                        onClick={() => setOpenChatAppointmentId(
+                          openChatAppointmentId === appointment.id ? null : appointment.id
+                        )}
+                        className="mt-4 rounded-lg border border-line px-4 py-2.5 text-sm font-medium text-ink hover:bg-paper"
+                      >
+                        {openChatAppointmentId === appointment.id ? "Close chat" : "Chat"}
+                      </button>
+                      {openChatAppointmentId === appointment.id && (
+                        <AppointmentChat
+                          appointmentId={appointment.id}
+                          doctorDetails={{
+                            doctorName,
+                            appointmentDate: formatDate(appointment.appointment_date),
+                            appointmentTime: formatTime(appointment.appointment_time),
+                            patientMessage: appointment.patient_message,
+                            status: appointment.status,
+                          }}
+                        />
+                      )}
+                    </>
                   )}
                 </article>
               ))}

@@ -8,10 +8,35 @@ interface AuthFormProps {
   mode: "login" | "signup";
 }
 
+function getSafeRedirect(value: string | null): string {
+  if (
+    !value ||
+    !value.startsWith("/") ||
+    value.startsWith("//") ||
+    /[\\\u0000-\u001f\u007f]/.test(value)
+  ) {
+    return "/";
+  }
+
+  try {
+    const target = new URL(value, "https://skinwise.invalid");
+    if (
+      target.origin !== "https://skinwise.invalid" ||
+      target.pathname.startsWith("//")
+    ) {
+      return "/";
+    }
+
+    return `${target.pathname}${target.search}${target.hash}`;
+  } catch {
+    return "/";
+  }
+}
+
 export default function AuthForm({ mode }: AuthFormProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirectTo = searchParams.get("redirectTo") ?? "/";
+  const redirectTo = getSafeRedirect(searchParams.get("redirectTo"));
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

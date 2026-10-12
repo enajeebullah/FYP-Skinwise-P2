@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
+import AppointmentChat from "@/components/AppointmentChat";
 
 interface Doctor {
   id: string;
@@ -40,6 +41,25 @@ function todayInPakistan() {
   }).formatToParts(new Date());
   const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
   return `${values.year}-${values.month}-${values.day}`;
+}
+
+function isAppointmentInFuture(appointment: Pick<Appointment, "appointment_date" | "appointment_time">) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Karachi",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  const now = `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}:${values.second}`;
+  const time = appointment.appointment_time.length === 5
+    ? `${appointment.appointment_time}:00`
+    : appointment.appointment_time.slice(0, 8);
+  return `${appointment.appointment_date}T${time}` > now;
 }
 
 function addDays(date: string, days: number) {
@@ -130,7 +150,25 @@ function isDoctorAvailableOnDate(doctor: Doctor, value: string) {
 function isDoctorAvailableAtTime(doctor: Doctor, value: string) {
   const range = getAvailableTimeRange(doctor.available_time);
   const selected = getTimeInMinutes(value);
-  return range !== null && selected !== null && selected >= range.start && selected <= range.end;
+  return (
+    range !== null &&
+    selected !== null &&
+    selected >= range.start &&
+    selected % 15 === 0 &&
+    selected + 15 <= range.end
+  );
+}
+
+function getDoctorTimeSlots(doctor: Doctor) {
+  const range = getAvailableTimeRange(doctor.available_time);
+  if (!range) return [];
+
+  const slots: string[] = [];
+  const firstSlot = Math.ceil(range.start / 15) * 15;
+  for (let start = firstSlot; start + 15 <= range.end; start += 15) {
+    slots.push(`${String(Math.floor(start / 60)).padStart(2, "0")}:${String(start % 60).padStart(2, "0")}`);
+  }
+  return slots;
 }
 
 function statusStyle(status: AppointmentStatus) {
@@ -154,14 +192,20 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
   const lastBookableDate = addDays(today, 30);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [openChatAppointmentId, setOpenChatAppointmentId] = useState<string | null>(null);
   const [selectedDoctor, setSelectedDoctor] = useState<Doctor | null>(null);
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
+  const [availableTimeSlots, setAvailableTimeSlots] = useState<string[]>([]);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [availabilityRefreshKey, setAvailabilityRefreshKey] = useState(0);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
+  const [cancellingAppointmentId, setCancellingAppointmentId] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [appointmentError, setAppointmentError] = useState<string | null>(null);
+  const [cancellationError, setCancellationError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
@@ -193,6 +237,97 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
     void loadData();
   }, [loadData]);
 
+  async function cancelAppointment(appointment: Appointment) {
+    if (!window.confirm("Cancel this appointment? This cannot be undone.")) return;
+
+    setCancellationError(null);
+    setNotice(null);
+    setCancellingAppointmentId(appointment.id);
+    const { data, error: cancellationFailure } = await createClient()
+      .from("appointments")
+      .update({ status: "cancelled" })
+      .eq("id", appointment.id)
+      .eq("patient_id", patientId)
+      .in("status", ["pending", "confirmed"])
+      .select("id")
+      .maybeSingle();
+
+    if (cancellationFailure) {
+      setCancellationError(`Could not cancel this appointment: ${cancellationFailure.message}`);
+      setCancellingAppointmentId(null);
+      return;
+    }
+
+    if (!data) {
+      setCancellationError("This appointment is no longer eligible for cancellation. Refresh and try again.");
+      setCancellingAppointmentId(null);
+      return;
+    }
+
+    setNotice("Your appointment has been cancelled.");
+    setAvailabilityRefreshKey((key) => key + 1);
+    await loadData();
+    setCancellingAppointmentId(null);
+  }
+
+  useEffect(() => {
+    let active = true;
+    const doctor = selectedDoctor;
+    setAvailableTimeSlots([]);
+    setTime("");
+
+    if (
+      !doctor ||
+      !isDateOnly(date) ||
+      date < today ||
+      date > lastBookableDate ||
+      !isDoctorAvailableOnDate(doctor, date)
+    ) {
+      setAvailabilityLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    const doctorId = doctor.id;
+    const candidateSlots = getDoctorTimeSlots(doctor);
+    if (candidateSlots.length === 0) {
+      setAvailabilityLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    async function loadAvailableSlots() {
+      setAvailabilityLoading(true);
+      const { data, error: availabilityError } = await createClient().rpc(
+        "get_available_appointment_slots",
+        {
+          p_doctor_id: doctorId,
+          p_appointment_date: date,
+          p_candidate_times: candidateSlots.map((slot) => `${slot}:00`),
+        }
+      );
+
+      if (!active) return;
+
+      if (availabilityError) {
+        setAppointmentError(`Could not load available time slots: ${availabilityError.message}`);
+        setAvailabilityLoading(false);
+        return;
+      }
+
+      const available = new Set<string>((data ?? []).map((slot: string) => slot.slice(0, 5)));
+      setAvailableTimeSlots(candidateSlots.filter((slot) => available.has(slot)));
+      setAvailabilityLoading(false);
+    }
+
+    void loadAvailableSlots();
+    return () => {
+      active = false;
+    };
+  }, [availabilityRefreshKey, date, lastBookableDate, selectedDoctor, today]);
+
   async function requestAppointment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedDoctor) return;
@@ -216,7 +351,12 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
       return;
     }
     if (!isDoctorAvailableAtTime(selectedDoctor, time)) {
-      setAppointmentError("This doctor is not available at the selected time. Please select another time.");
+      setAppointmentError("Choose one of the available 15-minute appointment slots.");
+      return;
+    }
+    if (!availableTimeSlots.includes(time)) {
+      setAppointmentError("This time slot is no longer available. Please choose another slot.");
+      setAvailabilityRefreshKey((key) => key + 1);
       return;
     }
 
@@ -241,6 +381,7 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
 
     if (!slotAvailable) {
       setAppointmentError("This time slot is already booked. Please choose another time.");
+      setAvailabilityRefreshKey((key) => key + 1);
       setSending(false);
       return;
     }
@@ -255,7 +396,12 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
     });
 
     if (insertError) {
-      setAppointmentError(`Could not send appointment request: ${insertError.message}`);
+      if (insertError.code === "23P01" || insertError.code === "23505") {
+        setAppointmentError("This 15-minute slot was just reserved by another patient. Choose another available slot.");
+        setAvailabilityRefreshKey((key) => key + 1);
+      } else {
+        setAppointmentError(`Could not send appointment request: ${insertError.message}`);
+      }
       setSending(false);
       return;
     }
@@ -365,20 +511,37 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
               </span>
             </label>
             <label className="text-sm font-medium text-ink">
-              Preferred time (PKT)
-              <input
+              Available 15-minute slots (PKT)
+              <select
                 required
-                type="time"
                 value={time}
+                disabled={availabilityLoading || !date || availableTimeSlots.length === 0}
                 onChange={(event) => {
                   setTime(event.target.value);
                   setAppointmentError(null);
                 }}
                 aria-describedby="appointment-time-help"
-                className="mt-1 block min-h-11 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm focus:border-[#4C9BE4] focus:outline-none focus:ring-2 focus:ring-[#4C9BE4]/20"
-              />
+                className="mt-1 block min-h-11 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm focus:border-[#4C9BE4] focus:outline-none focus:ring-2 focus:ring-[#4C9BE4]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFD] disabled:text-muted"
+              >
+                <option value="">
+                  {availabilityLoading
+                    ? "Checking available slots…"
+                    : !date
+                      ? "Choose a date first"
+                      : !isDateOnly(date) || !isDoctorAvailableOnDate(selectedDoctor, date)
+                        ? "No availability on this day"
+                        : availableTimeSlots.length === 0
+                          ? "No available slots"
+                          : "Choose an available slot"}
+                </option>
+                {availableTimeSlots.map((slot) => (
+                  <option key={slot} value={slot}>
+                    {formatTime(slot)}
+                  </option>
+                ))}
+              </select>
               <span id="appointment-time-help" className="mt-1 block text-xs font-normal text-muted">
-                Select a time within the doctor’s available hours shown above.
+                Each appointment lasts 15 minutes. Only available times within the doctor’s schedule are shown.
               </span>
             </label>
             {appointmentError && (
@@ -403,6 +566,7 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
       <section className="mt-10" aria-labelledby="my-appointments-heading">
         <h2 id="my-appointments-heading" className="mb-4 font-display text-2xl text-ink">My appointments</h2>
         {notice && <p role="status" className="mb-4 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">{notice}</p>}
+        {cancellationError && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{cancellationError}</p>}
         {appointments.length === 0 ? (
           <p className="rounded-2xl border border-line bg-white p-6 text-sm text-muted">You don’t have any appointments yet.</p>
         ) : (
@@ -427,6 +591,44 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
                   )}
                   {appointment.status === "confirmed" && !meetingHref && (
                     <p className="mt-3 text-sm text-muted">Your appointment is confirmed. The meeting link will be shared here.</p>
+                  )}
+                  {(appointment.status === "pending" || appointment.status === "confirmed") &&
+                    isAppointmentInFuture(appointment) && (
+                      <button
+                        type="button"
+                        disabled={cancellingAppointmentId !== null}
+                        onClick={() => void cancelAppointment(appointment)}
+                        className="mt-4 rounded-lg border border-red-200 px-4 py-2.5 text-sm font-medium text-[#A5404A] hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {cancellingAppointmentId === appointment.id ? "Cancelling…" : "Cancel Appointment"}
+                      </button>
+                    )}
+                  {(appointment.status === "confirmed" || appointment.status === "completed") && (
+                    <>
+                      <button
+                        type="button"
+                        aria-expanded={openChatAppointmentId === appointment.id}
+                        onClick={() => setOpenChatAppointmentId(
+                          openChatAppointmentId === appointment.id ? null : appointment.id
+                        )}
+                        className="mt-4 rounded-lg border border-line px-4 py-2.5 text-sm font-medium text-ink hover:bg-paper"
+                      >
+                        {openChatAppointmentId === appointment.id ? "Close chat" : "Chat"}
+                      </button>
+                      {openChatAppointmentId === appointment.id && (
+                        <AppointmentChat
+                          appointmentId={appointment.id}
+                          patientDetails={{
+                            doctorName: appointment.doctor?.name || "Dermatologist",
+                            doctorSpecialization: appointment.doctor?.specialization || "",
+                            doctorImageUrl: appointment.doctor?.image_url ?? null,
+                            appointmentDate: formatDate(appointment.appointment_date),
+                            appointmentTime: formatTime(appointment.appointment_time),
+                            status: appointment.status,
+                          }}
+                        />
+                      )}
+                    </>
                   )}
                 </article>
               );
