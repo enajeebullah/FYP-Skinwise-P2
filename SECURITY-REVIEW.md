@@ -24,3 +24,39 @@ Review scope: login/authentication, skin and acne analysis, dashboard and routin
 - Browser timing and presentation should be tested to confirm how long default safety-based recommendations remain visible while the profile request is pending.
 
 No code fixes were made as part of this review.
+
+## Appointment chat attachment review (2026-10-14)
+
+This static review covered `supabase/migration_add_appointment_chat_attachments.sql`,
+`supabase/migration_add_appointment_chat.sql`, and
+`components/AppointmentChat.tsx`. User-provided live checks reported eligible
+participant INSERT/SELECT policies on `public.appointment_messages`, no rows
+for the `storage.objects` policy query, and no row for the
+`appointment-chat-attachments` bucket query. No SQL was executed and no live
+settings were changed or independently queried.
+
+### Finding
+
+| # | Severity | File | Lines | Vulnerability | Confidence |
+|---|----------|------|-------|---------------|------------|
+| 1 | 🟡 MEDIUM | `supabase/migration_add_appointment_chat_attachments.sql` | 196-218 | The attachment SELECT policy allows an eligible appointment participant to read matching objects in the appointment folder even when no message references them. Because the client uploads before inserting message metadata, a failed message insert or failed cleanup can leave an unlinked object readable by the other participant. | 8/10 |
+
+No CRITICAL or HIGH issue was identified in this static review.
+
+### Remaining verification limits
+
+- The migration order is consultations schema, existing chat migration if
+  needed, then attachment migration. The text-chat migration includes a guard
+  against running after attachment support is present.
+- The attachment migration creates a private bucket with a 10 MiB limit and
+  allowed MIME metadata, and raises an exception if an existing bucket ID has
+  unexpected settings. MIME allowlists and metadata checks do not verify file
+  bytes or signatures.
+- Upload and delete policies are scoped to eligible appointment participants;
+  deletion additionally requires uploader ownership and no message reference.
+  The client attempts Storage API cleanup after failures, but failed cleanup
+  can leave orphaned objects.
+- Live `storage.objects.owner_id` schema/behavior, effective grants and full
+  policy composition, migration application state, and SQL runtime behavior
+  were not independently verified. Other permissive live policies could widen
+  access.
