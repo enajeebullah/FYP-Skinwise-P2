@@ -32,6 +32,34 @@ interface Appointment {
   doctor: Doctor | null;
 }
 
+type ConsultationPaymentMethod = "jazzcash" | "easypaisa";
+type ConsultationPaymentStatus = "pending" | "simulated_paid" | "failed" | "simulated_refunded";
+
+interface ConsultationPayment {
+  id: string;
+  appointment_id: string;
+  method: ConsultationPaymentMethod;
+  is_simulated: boolean;
+  amount: number;
+  currency: string;
+  status: ConsultationPaymentStatus;
+  status_reason: string | null;
+}
+
+type RefundRequestStatus = "requested" | "approved" | "rejected";
+
+interface ConsultationRefundRequest {
+  id: string;
+  payment_id: string;
+  appointment_id: string;
+  reason: string;
+  status: RefundRequestStatus;
+  admin_decision_reason: string | null;
+  created_at: string;
+  updated_at: string;
+  decided_at: string | null;
+}
+
 function todayInPakistan() {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Karachi",
@@ -171,10 +199,20 @@ function getDoctorTimeSlots(doctor: Doctor) {
   return slots;
 }
 
-function statusStyle(status: AppointmentStatus) {
-  if (status === "confirmed" || status === "completed") return "bg-[#E7F2EA] text-[#3E7750]";
-  if (status === "rejected" || status === "cancelled") return "bg-[#F9E8E9] text-[#A5404A]";
-  return "bg-[#FFF3D8] text-[#8C6719]";
+function appointmentStatusStyle(status: AppointmentStatus, isUpcoming: boolean) {
+  if (status === "pending") return "border-[#F1D99B] bg-[#FFF7E5] text-[#806016]";
+  if (status === "confirmed" && isUpcoming) return "border-[#B9D9C3] bg-[#EAF5ED] text-[#326846]";
+  if (status === "confirmed" || status === "completed") return "border-[#C8DCF5] bg-[#EDF5FF] text-[#175BB3]";
+  if (status === "cancelled" || status === "rejected") return "border-[#F0C9CC] bg-[#FFF0F1] text-[#A5404A]";
+  return "border-line bg-paper text-muted";
+}
+
+function formatFee(value: number) {
+  return new Intl.NumberFormat("en-PK", {
+    style: "currency",
+    currency: "PKR",
+    maximumFractionDigits: 2,
+  }).format(value);
 }
 
 function safeMeetingHref(value: string | null) {
@@ -192,6 +230,9 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
   const lastBookableDate = addDays(today, 30);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [consultationPayments, setConsultationPayments] = useState<ConsultationPayment[]>([]);
+  const [refundRequests, setRefundRequests] = useState<ConsultationRefundRequest[]>([]);
+  const [refundReasons, setRefundReasons] = useState<Record<string, string>>({});
   const [openChatAppointmentId, setOpenChatAppointmentId] = useState<string | null>(null);
   const [selectedDoctor, setSelectedDoctor] = useState<Doctor | null>(null);
   const [date, setDate] = useState("");
@@ -201,16 +242,73 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
   const [availabilityRefreshKey, setAvailabilityRefreshKey] = useState(0);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
+  const [paymentLoading, setPaymentLoading] = useState(true);
+  const [payingAppointmentId, setPayingAppointmentId] = useState<string | null>(null);
   const [cancellingAppointmentId, setCancellingAppointmentId] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [paymentActionError, setPaymentActionError] = useState<string | null>(null);
+  const [refundLoading, setRefundLoading] = useState(true);
+  const [refundError, setRefundError] = useState<string | null>(null);
+  const [refundActionError, setRefundActionError] = useState<string | null>(null);
+  const [requestingRefundPaymentId, setRequestingRefundPaymentId] = useState<string | null>(null);
   const [appointmentError, setAppointmentError] = useState<string | null>(null);
   const [cancellationError, setCancellationError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  const loadPaymentData = useCallback(async (appointmentIds: string[]) => {
+    setPaymentLoading(true);
+    setPaymentError(null);
+
+    if (appointmentIds.length === 0) {
+      setConsultationPayments([]);
+      setRefundRequests([]);
+      setRefundError(null);
+      setPaymentLoading(false);
+      setRefundLoading(false);
+      return;
+    }
+
+    const { data, error: paymentsFailure } = await createClient()
+      .from("consultation_payments")
+      .select("id, appointment_id, method, is_simulated, amount, currency, status, status_reason")
+      .eq("patient_id", patientId)
+      .in("appointment_id", appointmentIds);
+
+    if (paymentsFailure) {
+      setPaymentError(`Could not load payment details: ${paymentsFailure.message}`);
+      setRefundLoading(false);
+      setPaymentLoading(false);
+      return;
+    }
+
+    setConsultationPayments((data ?? []) as ConsultationPayment[]);
+    setPaymentLoading(false);
+    setRefundLoading(true);
+    setRefundError(null);
+    const { data: refundData, error: refundsFailure } = await createClient()
+      .from("consultation_refund_requests")
+      .select("id, payment_id, appointment_id, reason, status, admin_decision_reason, created_at, updated_at, decided_at")
+      .eq("patient_id", patientId);
+
+    if (refundsFailure) {
+      setRefundError(`Could not load refund request details: ${refundsFailure.message}`);
+      setRefundLoading(false);
+      return;
+    }
+
+    setRefundRequests((refundData ?? []) as ConsultationRefundRequest[]);
+    setRefundLoading(false);
+  }, [patientId]);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setPaymentLoading(true);
+    setPaymentError(null);
+    setPaymentActionError(null);
+    setRefundActionError(null);
     const supabase = createClient();
     const [doctorResult, appointmentResult] = await Promise.all([
       supabase.from("doctors").select("*").eq("is_active", true).order("name"),
@@ -224,14 +322,20 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
     if (doctorResult.error || appointmentResult.error) {
       const failure = doctorResult.error ?? appointmentResult.error;
       setError(`Could not load consultations: ${failure.message}`);
+      setConsultationPayments([]);
+      setPaymentError(`Could not verify payment records because consultations could not be loaded: ${failure?.message ?? "Unknown error"}`);
+      setRefundLoading(false);
       setLoading(false);
+      setPaymentLoading(false);
       return;
     }
 
     setDoctors((doctorResult.data ?? []) as Doctor[]);
-    setAppointments((appointmentResult.data ?? []) as unknown as Appointment[]);
+    const patientAppointments = (appointmentResult.data ?? []) as unknown as Appointment[];
+    setAppointments(patientAppointments);
+    await loadPaymentData(patientAppointments.map((appointment) => appointment.id));
     setLoading(false);
-  }, [patientId]);
+  }, [loadPaymentData, patientId]);
 
   useEffect(() => {
     void loadData();
@@ -268,6 +372,69 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
     setAvailabilityRefreshKey((key) => key + 1);
     await loadData();
     setCancellingAppointmentId(null);
+  }
+
+  async function createDemoPayment(appointment: Appointment, method: ConsultationPaymentMethod) {
+    setPaymentActionError(null);
+    setNotice(null);
+    setPayingAppointmentId(appointment.id);
+
+    const { data: paymentId, error: paymentFailure } = await createClient().rpc(
+      "create_consultation_demo_payment",
+      {
+        p_appointment_id: appointment.id,
+        p_method: method,
+      }
+    );
+
+    if (paymentFailure) {
+      if (paymentFailure.code === "23505") {
+        setPaymentActionError("A payment record already exists for this appointment. Refreshing its payment status.");
+        await loadPaymentData(appointments.map((item) => item.id));
+      } else {
+        setPaymentActionError(`Could not create the demo payment: ${paymentFailure.message}`);
+      }
+      setPayingAppointmentId(null);
+      return;
+    }
+
+    if (typeof paymentId !== "string" || paymentId.length === 0) {
+      setPaymentActionError("The payment request returned no payment ID. Please refresh and check the appointment payment status.");
+      setPayingAppointmentId(null);
+      return;
+    }
+
+    setNotice(
+      `Demo payment ${paymentId} was created and is awaiting admin review. No real money was transferred.`
+    );
+    await loadPaymentData(appointments.map((item) => item.id));
+    setPayingAppointmentId(null);
+  }
+
+  async function requestSimulatedRefund(payment: ConsultationPayment) {
+    const reason = refundReasons[payment.id]?.trim() ?? "";
+    if (reason.length < 1 || reason.length > 2000) {
+      setRefundActionError("Provide a refund request reason between 1 and 2000 characters.");
+      return;
+    }
+
+    setRefundActionError(null);
+    setNotice(null);
+    setRequestingRefundPaymentId(payment.id);
+    const { error: requestFailure } = await createClient().rpc("create_consultation_refund_request", {
+      p_payment_id: payment.id,
+      p_reason: reason,
+    });
+
+    if (requestFailure) {
+      setRefundActionError(`Could not submit refund request: ${requestFailure.message}`);
+      setRequestingRefundPaymentId(null);
+      return;
+    }
+
+    setNotice("Your simulated refund request was sent for admin review. No real money will be returned.");
+    await loadPaymentData(appointments.map((appointment) => appointment.id));
+    setRequestingRefundPaymentId(null);
   }
 
   useEffect(() => {
@@ -417,46 +584,105 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
 
   return (
     <main className="dashboard-content animate-fadeUp">
-      <header className="mb-6">
-        <p className="eyebrow">ONLINE CARE</p>
-        <h1 className="font-display text-3xl text-ink">Consult a dermatologist</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
-          Browse available dermatologists and request an online appointment. A dermatologist independently evaluates you during the consultation.
-        </p>
+      <header className="mb-8 rounded-3xl border border-[#D9E8F7] bg-gradient-to-br from-white via-white to-[#EDF6FF] p-6 shadow-sm sm:p-8">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3978C5]">Online care</p>
+        <div className="mt-2 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 className="font-display text-3xl text-ink sm:text-4xl">Consult a dermatologist</h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
+              Find a dermatologist, choose an available 15-minute slot, and send an appointment request. Your request stays pending until it is reviewed.
+            </p>
+          </div>
+          <span className="inline-flex w-fit items-center gap-2 rounded-full border border-[#C8DCF5] bg-white px-3 py-2 text-xs font-medium text-[#175BB3]">
+            <span className="h-2 w-2 rounded-full bg-[#4C9BE4]" />
+            15-minute appointment slots
+          </span>
+        </div>
       </header>
 
-      {error && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</p>}
+      {error && <p role="alert" className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</p>}
 
-      <section aria-labelledby="doctor-list-heading">
-        <h2 id="doctor-list-heading" className="mb-4 font-display text-2xl text-ink">Available dermatologists</h2>
+      <section aria-labelledby="doctor-list-heading" className="space-y-4">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Find your specialist</p>
+            <h2 id="doctor-list-heading" className="mt-1 font-display text-2xl text-ink">Available dermatologists</h2>
+          </div>
+          {!loading && doctors.length > 0 && <p className="text-sm text-muted">{doctors.length} {doctors.length === 1 ? "specialist" : "specialists"}</p>}
+        </div>
         {loading ? (
-          <p className="rounded-2xl border border-line bg-white p-6 text-sm text-muted">Loading dermatologists…</p>
-        ) : doctors.length === 0 ? (
-          <p className="rounded-2xl border border-line bg-white p-6 text-sm text-muted">No dermatologists are available right now. Please check again later.</p>
-        ) : (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {doctors.map((doctor) => (
-              <article key={doctor.id} className="flex flex-col rounded-2xl border border-line bg-white p-5 shadow-sm">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" aria-label="Loading dermatologists">
+            {[0, 1, 2].map((item) => (
+              <div key={item} className="animate-pulse rounded-2xl border border-line bg-white p-5">
                 <div className="flex items-center gap-3">
-                  {doctor.image_url ? (
-                    <img src={doctor.image_url} alt="" className="h-14 w-14 rounded-full object-cover" />
-                  ) : (
-                    <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[#E4F0FF] font-display text-xl text-[#175BB3]">
-                      {doctor.name.slice(0, 1).toUpperCase()}
-                    </div>
-                  )}
-                  <div>
-                    <h3 className="font-semibold text-ink">{doctor.name}{doctor.is_verified ? <span className="ml-1 text-[#3978C5]" aria-label="Verified">✓</span> : null}</h3>
-                    <p className="text-xs text-muted">{doctor.qualification}</p>
+                  <div className="h-14 w-14 rounded-full bg-[#EAF0F7]" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-4 w-2/3 rounded bg-[#EAF0F7]" />
+                    <div className="h-3 w-1/2 rounded bg-[#EAF0F7]" />
                   </div>
                 </div>
-                <p className="mt-4 text-sm font-medium text-[#3978C5]">{doctor.specialization}</p>
-                <p className="mt-1 text-sm text-muted">{doctor.experience} years of experience</p>
-                {doctor.bio && <p className="mt-3 text-sm leading-6 text-ink/80">{doctor.bio}</p>}
-                <div className="mt-4 space-y-1 text-xs text-muted">
-                  <p>Available: {doctor.available_days.length ? doctor.available_days.join(", ") : "By appointment"}</p>
-                  {doctor.available_time && <p>Hours: {doctor.available_time} PKT</p>}
-                  {doctor.consultation_fee != null && <p>Fee: {doctor.consultation_fee}</p>}
+                <div className="mt-6 h-3 w-full rounded bg-[#EAF0F7]" />
+                <div className="mt-3 h-3 w-3/4 rounded bg-[#EAF0F7]" />
+                <div className="mt-6 h-10 rounded-lg bg-[#EAF0F7]" />
+              </div>
+            ))}
+          </div>
+        ) : doctors.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-[#C8D5E4] bg-white p-8 text-center">
+            <p className="font-medium text-ink">No dermatologists are available right now</p>
+            <p className="mt-1 text-sm text-muted">Please check back later for available consultation providers.</p>
+          </div>
+        ) : (
+          <div className="grid items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {doctors.map((doctor) => (
+              <article key={doctor.id} className="flex min-w-0 flex-col rounded-2xl border border-line bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-[#C8DCF5] hover:shadow-md">
+                <div className="flex items-start gap-3">
+                  {doctor.image_url ? (
+                    <img src={doctor.image_url} alt="" className="h-14 w-14 shrink-0 rounded-full border border-line object-cover" />
+                  ) : (
+                    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-[#E4F0FF] font-display text-xl text-[#175BB3]">
+                      {doctor.name.trim().slice(0, 1).toUpperCase() || "D"}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="font-semibold leading-5 text-ink">{doctor.name.trim() || "Dermatologist"}</h3>
+                      {doctor.is_verified && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-[#EAF5ED] px-2 py-0.5 text-[11px] font-medium text-[#326846]" aria-label="Verified dermatologist">
+                          <span aria-hidden="true">✓</span> Verified
+                        </span>
+                      )}
+                    </div>
+                    {doctor.qualification.trim() && <p className="mt-1 text-xs leading-5 text-muted">{doctor.qualification}</p>}
+                  </div>
+                </div>
+                {doctor.specialization.trim() && (
+                  <p className="mt-4 w-fit rounded-full bg-[#EDF5FF] px-3 py-1 text-xs font-semibold text-[#175BB3]">{doctor.specialization}</p>
+                )}
+                {Number.isFinite(doctor.experience) && doctor.experience >= 0 && (
+                  <p className="mt-3 text-sm text-muted">{doctor.experience} {doctor.experience === 1 ? "year" : "years"} of experience</p>
+                )}
+                {doctor.bio.trim() && <p className="mt-3 line-clamp-3 text-sm leading-6 text-ink/80">{doctor.bio}</p>}
+                <div className="mt-5 grid gap-3 border-t border-line pt-4 text-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="text-muted">Availability</span>
+                    <span className="text-right font-medium text-ink">
+                      {doctor.available_days.filter((day) => day.trim()).length
+                        ? doctor.available_days.filter((day) => day.trim()).join(", ")
+                        : "Availability not listed"}
+                      {doctor.available_time.trim() && <span className="block text-xs font-normal text-muted">{doctor.available_time} PKT</span>}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted">Consultation fee</span>
+                    <span className="font-semibold text-ink">
+                      {doctor.consultation_fee !== null &&
+                      Number.isFinite(doctor.consultation_fee) &&
+                      doctor.consultation_fee >= 0
+                        ? formatFee(doctor.consultation_fee)
+                        : "Fee not listed"}
+                    </span>
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -465,9 +691,9 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
                     setAppointmentError(null);
                     setNotice(null);
                   }}
-                  className="mt-5 rounded-lg bg-ink px-4 py-2.5 text-sm font-medium text-white hover:bg-[#344d7a]"
+                  className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#344d7a] focus:outline-none focus:ring-2 focus:ring-[#4C9BE4] focus:ring-offset-2"
                 >
-                  Request appointment
+                  Request a consultation
                 </button>
               </article>
             ))}
@@ -476,19 +702,27 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
       </section>
 
       {selectedDoctor && (
-        <section className="mt-6 rounded-2xl border border-[#C8DCF5] bg-white p-5 shadow-sm sm:p-6" aria-labelledby="request-heading">
-          <form noValidate onSubmit={requestAppointment} className="grid gap-4 sm:grid-cols-2">
-            <div className="sm:col-span-2">
-              <h2 id="request-heading" className="font-display text-xl text-ink">Request with {selectedDoctor.name}</h2>
-              <p className="mt-1 text-sm text-muted">Your appointment remains pending until it is reviewed.</p>
-            </div>
+        <section className="mt-6 overflow-hidden rounded-2xl border border-[#C8DCF5] bg-white shadow-sm" aria-labelledby="request-heading">
+          <div className="border-b border-[#DCE9F6] bg-[#F4F9FF] px-5 py-4 sm:px-6">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#3978C5]">Appointment request</p>
+            <h2 id="request-heading" className="mt-1 font-display text-xl text-ink">Request with {selectedDoctor.name}</h2>
+            <p className="mt-1 text-sm text-muted">Choose a preferred time. Your appointment remains pending until the dermatologist reviews it.</p>
+          </div>
+          <form noValidate onSubmit={requestAppointment} className="grid gap-4 p-5 sm:grid-cols-2 sm:p-6">
             <div className="rounded-xl border border-[#E5EAF3] bg-[#F8FAFD] p-4 sm:col-span-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted">Doctor availability</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted">Availability</p>
               <p className="mt-1 text-sm font-medium text-ink">
-                {selectedDoctor.available_days.length ? selectedDoctor.available_days.join(", ") : "No available days listed"}
+                {selectedDoctor.available_days.filter((day) => day.trim()).length
+                  ? selectedDoctor.available_days.filter((day) => day.trim()).join(", ")
+                  : "Availability not listed"}
               </p>
               <p className="mt-1 text-sm text-muted">
-                {selectedDoctor.available_time ? `${selectedDoctor.available_time} PKT` : "No available time range listed"}
+                {selectedDoctor.available_time.trim() ? `${selectedDoctor.available_time} PKT` : "Hours not listed"}
+                {selectedDoctor.consultation_fee !== null &&
+                Number.isFinite(selectedDoctor.consultation_fee) &&
+                selectedDoctor.consultation_fee >= 0
+                  ? ` · ${formatFee(selectedDoctor.consultation_fee)}`
+                  : ""}
               </p>
             </div>
             <label className="text-sm font-medium text-ink">
@@ -551,70 +785,225 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
             )}
             <label className="text-sm text-ink sm:col-span-2">
               Message for the dermatologist (optional)
-              <textarea rows={3} maxLength={1000} value={message} onChange={(event) => setMessage(event.target.value)} className="mt-1 block w-full rounded-lg border border-line px-3 py-2" />
+              <textarea rows={3} maxLength={1000} value={message} onChange={(event) => setMessage(event.target.value)} className="mt-1 block w-full rounded-lg border border-line px-3 py-2 focus:border-[#4C9BE4] focus:outline-none focus:ring-2 focus:ring-[#4C9BE4]/20" />
             </label>
-            <div className="flex flex-wrap gap-2 sm:col-span-2">
-              <button disabled={sending} className="rounded-lg bg-ink px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
+            <div className="flex flex-col-reverse gap-2 border-t border-line pt-4 sm:col-span-2 sm:flex-row sm:justify-end">
+              <button type="button" onClick={() => setSelectedDoctor(null)} className="min-h-11 rounded-lg border border-line px-4 py-2 text-sm font-medium text-ink hover:bg-paper">Close</button>
+              <button disabled={sending} className="min-h-11 rounded-lg bg-ink px-5 py-2 text-sm font-semibold text-white transition hover:bg-[#344d7a] disabled:cursor-not-allowed disabled:opacity-60">
                 {sending ? "Sending…" : "Send appointment request"}
               </button>
-              <button type="button" onClick={() => setSelectedDoctor(null)} className="rounded-lg border border-line px-4 py-2 text-sm text-ink">Cancel</button>
             </div>
           </form>
         </section>
       )}
 
-      <section className="mt-10" aria-labelledby="my-appointments-heading">
-        <h2 id="my-appointments-heading" className="mb-4 font-display text-2xl text-ink">My appointments</h2>
-        {notice && <p role="status" className="mb-4 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">{notice}</p>}
-        {cancellationError && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{cancellationError}</p>}
+      <section className="mt-10 space-y-4" aria-labelledby="my-appointments-heading">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Your care</p>
+            <h2 id="my-appointments-heading" className="mt-1 font-display text-2xl text-ink">My appointments</h2>
+          </div>
+          {!loading && appointments.length > 0 && <p className="text-sm text-muted">{appointments.length} total</p>}
+        </div>
+        {notice && <p role="status" className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">{notice}</p>}
+        {cancellationError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{cancellationError}</p>}
+        {paymentError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{paymentError}</p>}
+        {paymentActionError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{paymentActionError}</p>}
+        {refundError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{refundError}</p>}
+        {refundActionError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{refundActionError}</p>}
+        {loading ? (
+          <p className="rounded-2xl border border-line bg-white p-6 text-sm text-muted">Loading your appointments…</p>
+        ) : null}
         {appointments.length === 0 ? (
-          <p className="rounded-2xl border border-line bg-white p-6 text-sm text-muted">You don’t have any appointments yet.</p>
+          !loading && (
+            <div className="rounded-2xl border border-dashed border-[#C8D5E4] bg-white p-8 text-center">
+              <p className="font-medium text-ink">No appointments yet</p>
+              <p className="mt-1 text-sm text-muted">Choose a dermatologist above to send your first appointment request.</p>
+            </div>
+          )
         ) : (
-          <div className="grid gap-3">
+          !loading && <div className="grid gap-3">
             {appointments.map((appointment) => {
               const meetingHref = safeMeetingHref(appointment.meeting_link);
+              const consultationPayment = consultationPayments.find(
+                (payment) => payment.appointment_id === appointment.id
+              );
+              const refundRequest = consultationPayment
+                ? refundRequests.find((request) => request.payment_id === consultationPayment.id)
+                : undefined;
+              const isUpcoming = isAppointmentInFuture(appointment);
+              const isPaymentEligible =
+                (appointment.status === "confirmed" || appointment.status === "completed") &&
+                Number.isFinite(appointment.doctor?.consultation_fee) &&
+                (appointment.doctor?.consultation_fee ?? 0) > 0;
               return (
-                <article key={appointment.id} className="rounded-2xl border border-line bg-white p-5">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <h3 className="font-semibold text-ink">{appointment.doctor?.name || "Dermatologist"}</h3>
-                      {appointment.doctor?.specialization && <p className="mt-1 text-sm text-muted">{appointment.doctor.specialization}</p>}
-                      <p className="mt-2 text-sm text-ink/80">{formatDate(appointment.appointment_date)} at {formatTime(appointment.appointment_time)}</p>
-                      {appointment.patient_message && <p className="mt-2 text-sm text-muted">Your message: {appointment.patient_message}</p>}
+                <article key={appointment.id} className="overflow-hidden rounded-2xl border border-line bg-white shadow-sm">
+                  <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                        {appointment.status === "confirmed" && isUpcoming ? "Upcoming consultation" : "Consultation"}
+                      </p>
+                      <h3 className="mt-1 font-semibold text-ink">{appointment.doctor?.name?.trim() || "Dermatologist"}</h3>
+                      {appointment.doctor?.specialization?.trim() && <p className="mt-0.5 text-sm text-muted">{appointment.doctor.specialization}</p>}
+                      <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-ink/80">
+                        <span>{formatDate(appointment.appointment_date)}</span>
+                        <span aria-hidden="true" className="text-muted">·</span>
+                        <span>{formatTime(appointment.appointment_time)}</span>
+                      </div>
+                      {appointment.patient_message && (
+                        <p className="mt-3 rounded-lg bg-[#F8FAFD] px-3 py-2 text-sm leading-5 text-muted">
+                          <span className="font-medium text-ink">Your note:</span> {appointment.patient_message}
+                        </p>
+                      )}
                     </div>
-                    <span className={`rounded-full px-3 py-1 text-xs capitalize ${statusStyle(appointment.status)}`}>{appointment.status}</span>
+                    <span className={`inline-flex w-fit shrink-0 items-center rounded-full border px-3 py-1.5 text-xs font-semibold ${appointmentStatusStyle(appointment.status, isUpcoming)}`}>
+                      {appointment.status === "confirmed" && isUpcoming ? "Upcoming · Confirmed" : appointment.status.charAt(0).toUpperCase() + appointment.status.slice(1)}
+                    </span>
                   </div>
-                  {appointment.status === "confirmed" && meetingHref && (
-                    <a href={meetingHref} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex rounded-lg bg-[#175BB3] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#124A91]">
-                      Join Consultation
-                    </a>
+                  {(isPaymentEligible || consultationPayment) && (
+                    <div className="mx-4 mb-4 rounded-xl border border-[#E5EAF3] bg-[#F8FAFD] p-3 sm:mx-5 sm:mb-5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-ink">Payment</p>
+                        <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-[#53698E]">DEMO · NO REAL MONEY</span>
+                      </div>
+                      {paymentLoading ? (
+                        <p className="mt-2 text-sm text-muted">Loading payment details…</p>
+                      ) : paymentError ? (
+                        <p className="mt-2 text-sm text-red-800">Payment options are unavailable until payment details load successfully.</p>
+                      ) : consultationPayment ? (
+                        <>
+                        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="text-sm font-medium text-ink">
+                              {consultationPayment.method === "jazzcash" ? "JazzCash" : "Easypaisa"} (Demo)
+                            </p>
+                            <p className="mt-0.5 text-xs text-muted">
+                              {formatFee(consultationPayment.amount)} ·{" "}
+                              {consultationPayment.status === "pending"
+                                ? "Awaiting admin review"
+                                : consultationPayment.status === "simulated_paid"
+                                  ? "Simulated paid"
+                                  : consultationPayment.status === "simulated_refunded"
+                                    ? "Simulated refunded"
+                                    : "Failed"}
+                            </p>
+                            {consultationPayment.status_reason && (
+                              <p className="mt-1 text-xs text-muted">Status note: {consultationPayment.status_reason}</p>
+                            )}
+                          </div>
+                          <span className={`w-fit rounded-full px-2.5 py-1 text-xs font-medium ${
+                            consultationPayment.status === "simulated_paid"
+                              ? "bg-[#EAF5ED] text-[#326846]"
+                              : consultationPayment.status === "failed"
+                                ? "bg-[#FFF0F1] text-[#A5404A]"
+                                : "bg-white text-[#53698E]"
+                          }`}>
+                            {consultationPayment.status.replaceAll("_", " ")}
+                          </span>
+                        </div>
+                        {refundLoading ? (
+                          <p className="mt-2 text-xs text-muted">Loading refund details…</p>
+                        ) : refundError ? (
+                          <p className="mt-2 text-xs text-red-800">Refund request availability could not be checked.</p>
+                        ) : refundRequest ? (
+                          <div className="mt-3 border-t border-[#E1E8F0] pt-3 text-xs">
+                            <p className="font-medium text-ink">Simulated refund request: {refundRequest.status}</p>
+                            <p className="mt-1 text-muted">{refundRequest.reason}</p>
+                            {refundRequest.admin_decision_reason && (
+                              <p className="mt-1 text-muted">Admin response: {refundRequest.admin_decision_reason}</p>
+                            )}
+                          </div>
+                        ) : consultationPayment.status === "simulated_paid" ? (
+                          <div className="mt-3 border-t border-[#E1E8F0] pt-3">
+                            <label className="block text-xs font-medium text-ink">
+                              Request a simulated refund
+                              <textarea
+                                rows={2}
+                                maxLength={2000}
+                                value={refundReasons[consultationPayment.id] ?? ""}
+                                onChange={(event) => setRefundReasons({ ...refundReasons, [consultationPayment.id]: event.target.value })}
+                                placeholder="Tell us why you are requesting a refund"
+                                className="mt-1 block w-full rounded-lg border border-line bg-white px-3 py-2 text-sm font-normal focus:border-[#4C9BE4] focus:outline-none focus:ring-2 focus:ring-[#4C9BE4]/20"
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              disabled={requestingRefundPaymentId !== null}
+                              onClick={() => void requestSimulatedRefund(consultationPayment)}
+                              className="mt-2 rounded-lg border border-line bg-white px-3 py-2 text-xs font-semibold text-ink hover:bg-paper disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {requestingRefundPaymentId === consultationPayment.id ? "Submitting request…" : "Submit refund request"}
+                            </button>
+                            <p className="mt-1 text-[11px] text-muted">For demo review only; no real money will be returned.</p>
+                          </div>
+                        ) : null}
+                        </>
+                      ) : isPaymentEligible ? (
+                        <>
+                          <p className="mt-2 text-xs text-muted">
+                            {formatFee(appointment.doctor?.consultation_fee ?? 0)} · Choose a method for admin review. No real money is transferred.
+                          </p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              disabled={payingAppointmentId !== null}
+                              onClick={() => void createDemoPayment(appointment, "jazzcash")}
+                              className="rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-paper disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {payingAppointmentId === appointment.id ? "Creating demo payment…" : "JazzCash (Demo)"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={payingAppointmentId !== null}
+                              onClick={() => void createDemoPayment(appointment, "easypaisa")}
+                              className="rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-paper disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {payingAppointmentId === appointment.id ? "Creating demo payment…" : "Easypaisa (Demo)"}
+                            </button>
+                          </div>
+                        </>
+                      ) : null}
+                    </div>
                   )}
-                  {appointment.status === "confirmed" && !meetingHref && (
-                    <p className="mt-3 text-sm text-muted">Your appointment is confirmed. The meeting link will be shared here.</p>
+                  {((appointment.status === "pending" && isUpcoming) ||
+                    appointment.status === "confirmed" ||
+                    appointment.status === "completed") && (
+                    <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3 sm:px-5">
+                      {appointment.status === "confirmed" && meetingHref && (
+                        <a href={meetingHref} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-10 items-center rounded-lg bg-[#175BB3] px-4 py-2 text-sm font-semibold text-white hover:bg-[#124A91]">
+                          Join consultation
+                        </a>
+                      )}
+                      {appointment.status === "confirmed" && !meetingHref && (
+                        <p className="text-sm text-muted">Your appointment is confirmed. The meeting link will be shared here.</p>
+                      )}
+                      {(appointment.status === "pending" || appointment.status === "confirmed") &&
+                        isUpcoming && (
+                          <button
+                            type="button"
+                            disabled={cancellingAppointmentId !== null}
+                            onClick={() => void cancelAppointment(appointment)}
+                            className="min-h-10 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-[#A5404A] hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {cancellingAppointmentId === appointment.id ? "Cancelling…" : "Cancel appointment"}
+                          </button>
+                        )}
+                      {(appointment.status === "confirmed" || appointment.status === "completed") && (
+                        <button
+                          type="button"
+                          aria-expanded={openChatAppointmentId === appointment.id}
+                          onClick={() => setOpenChatAppointmentId(
+                            openChatAppointmentId === appointment.id ? null : appointment.id
+                          )}
+                          className="min-h-10 rounded-lg border border-line px-3 py-2 text-sm font-medium text-ink hover:bg-paper"
+                        >
+                          {openChatAppointmentId === appointment.id ? "Close chat" : "Open chat"}
+                        </button>
+                      )}
+                    </div>
                   )}
-                  {(appointment.status === "pending" || appointment.status === "confirmed") &&
-                    isAppointmentInFuture(appointment) && (
-                      <button
-                        type="button"
-                        disabled={cancellingAppointmentId !== null}
-                        onClick={() => void cancelAppointment(appointment)}
-                        className="mt-4 rounded-lg border border-red-200 px-4 py-2.5 text-sm font-medium text-[#A5404A] hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {cancellingAppointmentId === appointment.id ? "Cancelling…" : "Cancel Appointment"}
-                      </button>
-                    )}
                   {(appointment.status === "confirmed" || appointment.status === "completed") && (
                     <>
-                      <button
-                        type="button"
-                        aria-expanded={openChatAppointmentId === appointment.id}
-                        onClick={() => setOpenChatAppointmentId(
-                          openChatAppointmentId === appointment.id ? null : appointment.id
-                        )}
-                        className="mt-4 rounded-lg border border-line px-4 py-2.5 text-sm font-medium text-ink hover:bg-paper"
-                      >
-                        {openChatAppointmentId === appointment.id ? "Close chat" : "Chat"}
-                      </button>
                       {openChatAppointmentId === appointment.id && (
                         <AppointmentChat
                           appointmentId={appointment.id}

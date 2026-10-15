@@ -1,15 +1,37 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
 
 const MAX_MESSAGE_LENGTH = 2000;
+const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
+const ATTACHMENT_BUCKET = "appointment-chat-attachments";
+const ATTACHMENT_TYPES: Record<string, string> = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  webp: "image/webp",
+  gif: "image/gif",
+  pdf: "application/pdf",
+};
 
 interface AppointmentMessage {
   id: string;
   sender_id: string;
-  message: string;
+  message: string | null;
   created_at: string;
+  attachment_storage_path: string | null;
+  attachment_file_name: string | null;
+  attachment_content_type: string | null;
+  attachment_size_bytes: number | null;
+}
+
+interface PendingAttachment {
+  file: File;
+  storagePath: string;
+  contentType: string;
+  fileName: string;
+  uploaded: boolean;
 }
 
 interface PatientChatDetails {
@@ -35,6 +57,232 @@ interface AppointmentChatProps {
   doctorDetails?: DoctorChatDetails;
 }
 
+interface ChatComposerProps {
+  appointmentId: string;
+  draft: string;
+  selectedFile: File | null;
+  sending: boolean;
+  uploadProgress: number | null;
+  currentUserId: string | null;
+  onDraftChange: (value: string) => void;
+  onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}
+
+function validateAttachment(file: File): string | null {
+  const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+  const expectedType = ATTACHMENT_TYPES[extension];
+
+  if (!expectedType || (file.type && file.type !== expectedType)) {
+    return "Choose a JPG, PNG, WebP, GIF, or PDF file.";
+  }
+  if (file.size <= 0 || file.size > MAX_ATTACHMENT_SIZE) {
+    return "Attachments must be smaller than 10 MB.";
+  }
+  return null;
+}
+
+function uploadWithProgress(
+  file: File,
+  storagePath: string,
+  accessToken: string,
+  onProgress: (progress: number) => void
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    const baseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const apiKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (!baseUrl || !apiKey) {
+      reject(new Error("Supabase Storage is not configured."));
+      return;
+    }
+
+    const encodedPath = storagePath.split("/").map(encodeURIComponent).join("/");
+    request.open("POST", `${baseUrl}/storage/v1/object/${ATTACHMENT_BUCKET}/${encodedPath}`);
+    request.setRequestHeader("apikey", apiKey);
+    request.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+    request.setRequestHeader("Content-Type", file.type || ATTACHMENT_TYPES[file.name.split(".").pop()?.toLowerCase() ?? ""]);
+    request.setRequestHeader("x-upsert", "false");
+    request.timeout = 120000;
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
+    };
+    request.onerror = () => reject(new Error("Network error while uploading the attachment."));
+    request.ontimeout = () => reject(new Error("Attachment upload timed out. Retry sending the message."));
+    request.onload = () => {
+      if (request.status >= 200 && request.status < 300) {
+        resolve();
+        return;
+      }
+      let message = `Storage upload failed (${request.status}).`;
+      try {
+        const response = JSON.parse(request.responseText) as { message?: string; error?: string };
+        message = response.message ?? response.error ?? message;
+      } catch {
+        // Keep the explicit HTTP error when Storage returns a non-JSON response.
+      }
+      reject(new Error(message));
+    };
+    request.send(file);
+  });
+}
+
+async function uploadedFileMatches(
+  file: File,
+  storagePath: string
+): Promise<boolean> {
+  const { data, error } = await createClient()
+    .storage.from(ATTACHMENT_BUCKET)
+    .download(storagePath);
+  if (error || !data || data.size !== file.size) return false;
+
+  const [storedBytes, selectedBytes] = await Promise.all([
+    data.arrayBuffer(),
+    file.arrayBuffer(),
+  ]);
+  const stored = new Uint8Array(storedBytes);
+  const selected = new Uint8Array(selectedBytes);
+  return stored.every((byte, index) => byte === selected[index]);
+}
+
+function MessageAttachment({ message }: { message: AppointmentMessage }) {
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    let createdUrl: string | null = null;
+    if (!message.attachment_storage_path) return;
+
+    void createClient()
+      .storage.from(ATTACHMENT_BUCKET)
+      .download(message.attachment_storage_path)
+      .then(({ data, error: downloadError }) => {
+        if (downloadError || !data) {
+          if (active) setLoadError(downloadError?.message ?? "Attachment could not be loaded.");
+          return;
+        }
+        createdUrl = URL.createObjectURL(data);
+        if (active) setObjectUrl(createdUrl);
+      })
+      .catch((downloadError: unknown) => {
+        if (active) setLoadError(downloadError instanceof Error ? downloadError.message : "Attachment could not be loaded.");
+      });
+
+    return () => {
+      active = false;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
+  }, [message.attachment_storage_path]);
+
+  if (!message.attachment_storage_path) return null;
+  const isImage = message.attachment_content_type?.startsWith("image/") ?? false;
+
+  return (
+    <div className="mt-2 max-w-full">
+      {loadError ? (
+        <p className="text-xs opacity-80">Attachment unavailable: {loadError}</p>
+      ) : objectUrl ? (
+        <>
+          {isImage ? (
+            <a href={objectUrl} target="_blank" rel="noopener noreferrer" aria-label={`Open ${message.attachment_file_name ?? "image"}`}>
+              <img
+                src={objectUrl}
+                alt={message.attachment_file_name ?? "Appointment attachment"}
+                className="max-h-64 max-w-full rounded-lg object-contain"
+              />
+            </a>
+          ) : (
+            <a
+              href={objectUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block max-w-full truncate text-sm font-medium underline"
+            >
+              PDF document · {message.attachment_file_name}
+            </a>
+          )}
+          <a
+            href={objectUrl}
+            download={message.attachment_file_name ?? "appointment-attachment"}
+            className="mt-1 inline-block text-xs underline"
+          >
+            Download {isImage ? "image" : "document"}
+          </a>
+        </>
+      ) : (
+        <p className="text-xs opacity-80">Loading attachment…</p>
+      )}
+    </div>
+  );
+}
+
+function ChatComposer({
+  appointmentId,
+  draft,
+  selectedFile,
+  sending,
+  uploadProgress,
+  currentUserId,
+  onDraftChange,
+  onFileChange,
+  onSubmit,
+}: ChatComposerProps) {
+  const canSend = Boolean(draft.trim() || selectedFile);
+  return (
+    <form onSubmit={onSubmit} className="mt-4">
+      <label htmlFor={`appointment-message-${appointmentId}`} className="sr-only">Write a message</label>
+      <div className="flex items-end gap-2 rounded-xl border border-[#DCE5F1] bg-white p-2 shadow-sm transition focus-within:border-[#77A9E8] focus-within:ring-2 focus-within:ring-[#77A9E8]/20">
+        <textarea
+          id={`appointment-message-${appointmentId}`}
+          rows={2}
+          maxLength={MAX_MESSAGE_LENGTH}
+          value={draft}
+          onChange={(event) => onDraftChange(event.target.value)}
+          placeholder="Write a message…"
+          className="max-h-32 min-h-12 flex-1 resize-y border-0 bg-transparent px-2 py-2 text-sm leading-5 text-ink outline-none placeholder:text-muted focus:ring-0 disabled:opacity-60"
+          disabled={sending || !currentUserId}
+        />
+        <label
+          htmlFor={`appointment-attachment-${appointmentId}`}
+          className={`inline-flex min-h-11 shrink-0 cursor-pointer items-center rounded-lg border border-line px-3 text-sm font-medium text-ink hover:bg-paper ${sending || !currentUserId ? "pointer-events-none opacity-50" : ""}`}
+        >
+          Attach
+        </label>
+        <input
+          id={`appointment-attachment-${appointmentId}`}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,.jpg,.jpeg,.png,.webp,.gif,.pdf"
+          className="sr-only"
+          onChange={onFileChange}
+          disabled={sending || !currentUserId || uploadProgress === 100}
+        />
+        <button
+          type="submit"
+          disabled={sending || !currentUserId || !canSend || draft.length > MAX_MESSAGE_LENGTH}
+          className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-lg bg-[#3978E8] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[#2869D8] focus:outline-none focus:ring-2 focus:ring-[#3978E8]/40 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-55"
+        >
+          {sending ? "Sending…" : "Send"}
+        </button>
+      </div>
+      {selectedFile && (
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[#EDF4FE] px-3 py-2 text-xs text-[#24539A]">
+          <span className="min-w-0 truncate">{selectedFile.name} · {(selectedFile.size / (1024 * 1024)).toFixed(1)} MB</span>
+          {uploadProgress !== null && <span>{uploadProgress < 100 ? `Uploading ${uploadProgress}%` : "Saving message…"}</span>}
+        </div>
+      )}
+      <div className="mt-2 flex flex-wrap justify-between gap-x-3 gap-y-1 px-1 text-xs text-muted">
+        <span>{draft.length}/{MAX_MESSAGE_LENGTH} characters · Images/PDF up to 10 MB</span>
+        {!currentUserId && <span>Sign in again to send a message.</span>}
+      </div>
+      {uploadProgress !== null && (
+        <progress className="mt-1 h-1 w-full accent-[#3978E8]" max={100} value={uploadProgress} aria-label="Attachment upload progress" />
+      )}
+    </form>
+  );
+}
+
 export default function AppointmentChat({ appointmentId, patientDetails, doctorDetails }: AppointmentChatProps) {
   const [messages, setMessages] = useState<AppointmentMessage[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -42,6 +290,9 @@ export default function AppointmentChat({ appointmentId, patientDetails, doctorD
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [pendingAttachment, setPendingAttachment] = useState<PendingAttachment | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
   const loadMessages = useCallback(async () => {
     setLoading(true);
@@ -64,7 +315,7 @@ export default function AppointmentChat({ appointmentId, patientDetails, doctorD
     setCurrentUserId(user.id);
     const { data, error: loadError } = await supabase
       .from("appointment_messages")
-      .select("id, sender_id, message, created_at")
+      .select("id, sender_id, message, created_at, attachment_storage_path, attachment_file_name, attachment_content_type, attachment_size_bytes")
       .eq("appointment_id", appointmentId)
       .order("created_at", { ascending: true })
       .order("id", { ascending: true });
@@ -87,27 +338,137 @@ export default function AppointmentChat({ appointmentId, patientDetails, doctorD
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const message = draft.trim();
-    if (!message || message.length > MAX_MESSAGE_LENGTH || !currentUserId) return;
+    if ((!message && !pendingAttachment) || message.length > MAX_MESSAGE_LENGTH || !currentUserId) return;
 
     setSending(true);
     setError(null);
-    const { error: insertError } = await createClient()
-      .from("appointment_messages")
-      .insert({
-        appointment_id: appointmentId,
-        sender_id: currentUserId,
-        message,
-      });
+    let attachment = pendingAttachment;
+    let uploadAttempted = false;
+    let messageInsertFailed = false;
+    try {
+      const supabase = createClient();
+      if (selectedFile && !attachment) {
+        const validationError = validateAttachment(selectedFile);
+        if (validationError) throw new Error(validationError);
+        const extension = selectedFile.name.split(".").pop()?.toLowerCase() ?? "";
+        const safeName = selectedFile.name.replace(/[\\/]/g, "_").slice(0, 255);
+        attachment = {
+          file: selectedFile,
+          storagePath: `${appointmentId}/${crypto.randomUUID()}.${extension}`,
+          contentType: ATTACHMENT_TYPES[extension],
+          fileName: safeName,
+          uploaded: false,
+        };
+        setPendingAttachment(attachment);
+      }
 
-    if (insertError) {
-      setError(`Could not send message: ${insertError.message}`);
+      if (attachment && !attachment.uploaded) {
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError || !session) throw new Error(`Could not verify upload session${sessionError ? `: ${sessionError.message}` : "."}`);
+        setUploadProgress(0);
+        uploadAttempted = true;
+        try {
+          await uploadWithProgress(
+            attachment.file,
+            attachment.storagePath,
+            session.access_token,
+            setUploadProgress
+          );
+        } catch (uploadError) {
+          const verified = await uploadedFileMatches(attachment.file, attachment.storagePath);
+          if (!verified) throw uploadError;
+        }
+        attachment = { ...attachment, uploaded: true };
+        setPendingAttachment(attachment);
+      }
+
+      if (attachment) {
+        const { data: existingMessage, error: existingMessageError } = await supabase
+          .from("appointment_messages")
+          .select("id")
+          .eq("attachment_storage_path", attachment.storagePath)
+          .maybeSingle();
+        if (existingMessageError) throw new Error(`Could not verify whether the message was already sent: ${existingMessageError.message}`);
+        if (existingMessage) {
+          setDraft("");
+          setSelectedFile(null);
+          setPendingAttachment(null);
+          await loadMessages();
+          return;
+        }
+      }
+
+      messageInsertFailed = true;
+      const { error: insertError } = await supabase
+        .from("appointment_messages")
+        .insert({
+          appointment_id: appointmentId,
+          sender_id: currentUserId,
+          message: message || null,
+          attachment_storage_path: attachment?.storagePath ?? null,
+          attachment_file_name: attachment?.fileName ?? null,
+          attachment_content_type: attachment?.contentType ?? null,
+          attachment_size_bytes: attachment?.file.size ?? null,
+        });
+      if (insertError) throw new Error(`Could not send message: ${insertError.message}`);
+      messageInsertFailed = false;
+
+      setDraft("");
+      setSelectedFile(null);
+      setPendingAttachment(null);
+      await loadMessages();
+    } catch (sendError) {
+      let messageText = sendError instanceof Error ? sendError.message : "Could not send message.";
+      if (attachment && (messageInsertFailed || uploadAttempted)) {
+        try {
+          const { error: cleanupError } = await createClient()
+            .storage.from(ATTACHMENT_BUCKET)
+            .remove([attachment.storagePath]);
+          if (cleanupError) {
+            if (attachment.uploaded) {
+              messageText += ` The uploaded file could not be removed and is retained for a safe retry: ${cleanupError.message}`;
+              setPendingAttachment(attachment);
+            } else {
+              messageText += ` Upload cleanup failed; the unattached file may remain for scheduled cleanup: ${cleanupError.message}`;
+              setPendingAttachment(null);
+            }
+          } else {
+            setPendingAttachment({ ...attachment, uploaded: false });
+          }
+        } catch (cleanupError) {
+          const detail = cleanupError instanceof Error ? cleanupError.message : "Unknown Storage cleanup error.";
+          if (attachment.uploaded) {
+            messageText += ` The uploaded file could not be removed and is retained for a safe retry: ${detail}`;
+            setPendingAttachment(attachment);
+          } else {
+            messageText += ` Upload cleanup failed; the unattached file may remain for scheduled cleanup: ${detail}`;
+            setPendingAttachment(null);
+          }
+        }
+      }
+      setError(messageText);
+    } finally {
       setSending(false);
+      setUploadProgress(null);
+    }
+  }
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0] ?? null;
+    event.currentTarget.value = "";
+    if (!file) return;
+    if (pendingAttachment?.uploaded) {
+      setError("Retry sending the current attachment before choosing another file.");
       return;
     }
-
-    setDraft("");
-    await loadMessages();
-    setSending(false);
+    const validationError = validateAttachment(file);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+    setError(null);
+    setSelectedFile(file);
+    setPendingAttachment(null);
   }
 
   const isPatientView = Boolean(patientDetails);
@@ -213,7 +574,8 @@ export default function AppointmentChat({ appointmentId, patientDetails, doctorD
                             ? "rounded-br-md bg-gradient-to-br from-[#4C8EF5] to-[#2869D8] text-white"
                             : "rounded-bl-md border border-[#E4EBF4] bg-white text-ink"
                         }`}>
-                          <p className="whitespace-pre-wrap break-words text-sm leading-6">{item.message}</p>
+                          {item.message && <p className="whitespace-pre-wrap break-words text-sm leading-6">{item.message}</p>}
+                          <MessageAttachment message={item} />
                           <time
                             dateTime={item.created_at}
                             className={`mt-1.5 block text-[11px] ${isCurrentUser ? "text-blue-100" : "text-muted"}`}
@@ -234,45 +596,17 @@ export default function AppointmentChat({ appointmentId, patientDetails, doctorD
               </p>
             )}
 
-            <form onSubmit={sendMessage} className="mt-4">
-              <label htmlFor={`appointment-message-${appointmentId}`} className="sr-only">Write a message</label>
-              <div className="flex items-end gap-2 rounded-xl border border-[#DCE5F1] bg-white p-2 shadow-sm transition focus-within:border-[#77A9E8] focus-within:ring-2 focus-within:ring-[#77A9E8]/20">
-                <textarea
-                  id={`appointment-message-${appointmentId}`}
-                  rows={2}
-                  maxLength={MAX_MESSAGE_LENGTH}
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                  placeholder="Write your message…"
-                  className="max-h-32 min-h-12 flex-1 resize-y border-0 bg-transparent px-2 py-2 text-sm leading-5 text-ink outline-none placeholder:text-muted focus:ring-0 disabled:opacity-60"
-                  disabled={sending || !currentUserId}
-                />
-                <button
-                  type="submit"
-                  disabled={sending || !currentUserId || !draft.trim() || draft.length > MAX_MESSAGE_LENGTH}
-                  className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-lg bg-[#3978E8] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[#2869D8] focus:outline-none focus:ring-2 focus:ring-[#3978E8]/40 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-55"
-                >
-                  {sending ? (
-                    <>
-                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />
-                      Sending…
-                    </>
-                  ) : (
-                    <>
-                      Send
-                      <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
-                        <path d="m3 10 14-7-4.5 14-2.4-5.1L3 10Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-                        <path d="m10.1 11.9 3.2-3.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                      </svg>
-                    </>
-                  )}
-                </button>
-              </div>
-              <div className="mt-2 flex flex-wrap justify-between gap-x-3 gap-y-1 px-1 text-xs text-muted">
-                <span>{draft.length}/{MAX_MESSAGE_LENGTH} characters</span>
-                {!currentUserId && !loading && <span>Sign in again to send a message.</span>}
-              </div>
-            </form>
+            <ChatComposer
+              appointmentId={appointmentId}
+              draft={draft}
+              selectedFile={selectedFile}
+              sending={sending}
+              uploadProgress={uploadProgress}
+              currentUserId={currentUserId}
+              onDraftChange={setDraft}
+              onFileChange={handleFileChange}
+              onSubmit={sendMessage}
+            />
           </div>
         </>
       ) : doctorDetails ? (
@@ -346,7 +680,8 @@ export default function AppointmentChat({ appointmentId, patientDetails, doctorD
                               ? "rounded-br-md bg-[#2F76E5] text-white"
                               : "rounded-bl-md border border-[#E2EAF5] bg-white text-[#172B4D]"
                           }`}>
-                            <p className="whitespace-pre-wrap break-words text-sm leading-6">{item.message}</p>
+                            {item.message && <p className="whitespace-pre-wrap break-words text-sm leading-6">{item.message}</p>}
+                            <MessageAttachment message={item} />
                             <time
                               dateTime={item.created_at}
                               className={`mt-1.5 block text-[11px] ${isCurrentUser ? "text-blue-100" : "text-muted"}`}
@@ -367,45 +702,17 @@ export default function AppointmentChat({ appointmentId, patientDetails, doctorD
                 </p>
               )}
 
-              <form onSubmit={sendMessage} className="mt-4">
-                <label htmlFor={`appointment-message-${appointmentId}`} className="sr-only">Write a message</label>
-                <div className="flex items-end gap-2 rounded-xl border border-[#DCE5F1] bg-white p-2 shadow-sm transition focus-within:border-[#77A9E8] focus-within:ring-2 focus-within:ring-[#77A9E8]/20">
-                  <textarea
-                    id={`appointment-message-${appointmentId}`}
-                    rows={2}
-                    maxLength={MAX_MESSAGE_LENGTH}
-                    value={draft}
-                    onChange={(event) => setDraft(event.target.value)}
-                    placeholder="Write a message to your patient…"
-                    className="max-h-32 min-h-12 flex-1 resize-y border-0 bg-transparent px-2 py-2 text-sm leading-5 text-ink outline-none placeholder:text-muted focus:ring-0 disabled:opacity-60"
-                    disabled={sending || !currentUserId}
-                  />
-                  <button
-                    type="submit"
-                    disabled={sending || !currentUserId || !draft.trim() || draft.length > MAX_MESSAGE_LENGTH}
-                    className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-lg bg-[#3978E8] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[#2869D8] focus:outline-none focus:ring-2 focus:ring-[#3978E8]/40 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-55"
-                  >
-                    {sending ? (
-                      <>
-                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />
-                        Sending…
-                      </>
-                    ) : (
-                      <>
-                        Send
-                        <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
-                          <path d="m3 10 14-7-4.5 14-2.4-5.1L3 10Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-                          <path d="m10.1 11.9 3.2-3.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                        </svg>
-                      </>
-                    )}
-                  </button>
-                </div>
-                <div className="mt-2 flex flex-wrap justify-between gap-x-3 gap-y-1 px-1 text-xs text-muted">
-                  <span>{draft.length}/{MAX_MESSAGE_LENGTH} characters</span>
-                  {!currentUserId && !loading && <span>Sign in again to send a message.</span>}
-                </div>
-              </form>
+              <ChatComposer
+                appointmentId={appointmentId}
+                draft={draft}
+                selectedFile={selectedFile}
+                sending={sending}
+                uploadProgress={uploadProgress}
+                currentUserId={currentUserId}
+                onDraftChange={setDraft}
+                onFileChange={handleFileChange}
+                onSubmit={sendMessage}
+              />
             </div>
 
             <div className="grid h-fit gap-4 lg:mt-[3.45rem]">
@@ -471,35 +778,24 @@ export default function AppointmentChat({ appointmentId, patientDetails, doctorD
                     {" · "}
                     <time dateTime={item.created_at}>{new Date(item.created_at).toLocaleString()}</time>
                   </p>
-                  <p className="mt-1 whitespace-pre-wrap break-words text-sm text-ink">{item.message}</p>
+                  {item.message && <p className="mt-1 whitespace-pre-wrap break-words text-sm text-ink">{item.message}</p>}
+                  <MessageAttachment message={item} />
                 </article>
               ))
             )}
           </div>
 
-          <form onSubmit={sendMessage} className="mt-3 grid gap-2">
-            <label htmlFor={`appointment-message-${appointmentId}`} className="sr-only">Write a message</label>
-            <textarea
-              id={`appointment-message-${appointmentId}`}
-              rows={3}
-              maxLength={MAX_MESSAGE_LENGTH}
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder="Write a message…"
-              className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm"
-              disabled={sending || !currentUserId}
-            />
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs text-muted">{draft.length}/{MAX_MESSAGE_LENGTH}</span>
-              <button
-                type="submit"
-                disabled={sending || !currentUserId || !draft.trim() || draft.length > MAX_MESSAGE_LENGTH}
-                className="rounded-lg bg-ink px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-              >
-                {sending ? "Sending…" : "Send"}
-              </button>
-            </div>
-          </form>
+          <ChatComposer
+            appointmentId={appointmentId}
+            draft={draft}
+            selectedFile={selectedFile}
+            sending={sending}
+            uploadProgress={uploadProgress}
+            currentUserId={currentUserId}
+            onDraftChange={setDraft}
+            onFileChange={handleFileChange}
+            onSubmit={sendMessage}
+          />
         </>
       )}
     </section>

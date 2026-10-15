@@ -3,8 +3,11 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
 
-type Section = "overview" | "doctors" | "appointments" | "users";
+type Section = "overview" | "doctors" | "appointments" | "payments" | "refunds" | "complaints" | "users";
 type AppointmentStatus = "pending" | "confirmed" | "completed" | "cancelled" | "rejected";
+type ConsultationPaymentStatus = "pending" | "simulated_paid" | "failed" | "simulated_refunded";
+type RefundRequestStatus = "requested" | "approved" | "rejected";
+type ComplaintStatus = "open" | "in_review" | "resolved" | "dismissed";
 
 interface Doctor {
   id: string;
@@ -42,6 +45,56 @@ interface PatientProfile {
   created_at: string;
 }
 
+interface ConsultationPayment {
+  id: string;
+  appointment_id: string;
+  patient_id: string;
+  doctor_id: string;
+  method: "jazzcash" | "easypaisa";
+  is_simulated: boolean;
+  amount: number;
+  currency: string;
+  status: ConsultationPaymentStatus;
+  status_reason: string | null;
+  created_at: string;
+  updated_at: string;
+  settled_at: string | null;
+}
+
+interface RefundRequest {
+  id: string;
+  payment_id: string;
+  appointment_id: string;
+  patient_id: string;
+  reason: string;
+  status: RefundRequestStatus;
+  admin_decision_reason: string | null;
+  created_at: string;
+  updated_at: string;
+  decided_at: string | null;
+}
+
+interface Complaint {
+  id: string;
+  appointment_id: string;
+  payment_id: string | null;
+  patient_id: string;
+  doctor_id: string;
+  reason: string;
+  status: ComplaintStatus;
+  admin_decision_reason: string | null;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+}
+
+interface PrivateAdminNote {
+  refund_request_id?: string;
+  complaint_id?: string;
+  notes: string;
+  updated_at: string;
+}
+
 interface DoctorForm {
   user_id: string;
   name: string;
@@ -74,6 +127,9 @@ const sections: { id: Section; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "doctors", label: "Dermatologists" },
   { id: "appointments", label: "Appointments" },
+  { id: "payments", label: "Consultation Payments" },
+  { id: "refunds", label: "Refund Requests" },
+  { id: "complaints", label: "Patient Complaints" },
   { id: "users", label: "Users" },
 ];
 
@@ -113,11 +169,33 @@ function statusStyle(status: AppointmentStatus) {
   return "bg-[#FFF3D8] text-[#8C6719]";
 }
 
+function consultationStatusStyle(status: string) {
+  if (["confirmed", "completed", "simulated_paid", "approved", "resolved"].includes(status)) {
+    return "bg-[#E7F2EA] text-[#3E7750]";
+  }
+  if (["cancelled", "rejected", "failed", "dismissed"].includes(status)) {
+    return "bg-[#F9E8E9] text-[#A5404A]";
+  }
+  return "bg-[#FFF3D8] text-[#8C6719]";
+}
+
+function formatTimestamp(value: string | null) {
+  return value ? new Date(value).toLocaleString() : "—";
+}
+
 export default function AdminPanel() {
   const [section, setSection] = useState<Section>("overview");
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [users, setUsers] = useState<PatientProfile[]>([]);
+  const [consultationPayments, setConsultationPayments] = useState<ConsultationPayment[]>([]);
+  const [refundRequests, setRefundRequests] = useState<RefundRequest[]>([]);
+  const [complaints, setComplaints] = useState<Complaint[]>([]);
+  const [refundAdminNotes, setRefundAdminNotes] = useState<PrivateAdminNote[]>([]);
+  const [complaintAdminNotes, setComplaintAdminNotes] = useState<PrivateAdminNote[]>([]);
+  const [paymentDataError, setPaymentDataError] = useState<string | null>(null);
+  const [refundDataError, setRefundDataError] = useState<string | null>(null);
+  const [complaintDataError, setComplaintDataError] = useState<string | null>(null);
   const [counts, setCounts] = useState({
     users: 0,
     doctors: 0,
@@ -128,6 +206,13 @@ export default function AdminPanel() {
   const [editingDoctor, setEditingDoctor] = useState<string | null>(null);
   const [appointmentFilter, setAppointmentFilter] = useState<"all" | AppointmentStatus>("all");
   const [meetingLinks, setMeetingLinks] = useState<Record<string, string>>({});
+  const [paymentReasons, setPaymentReasons] = useState<Record<string, string>>({});
+  const [refundDecisionReasons, setRefundDecisionReasons] = useState<Record<string, string>>({});
+  const [refundPrivateNotes, setRefundPrivateNotes] = useState<Record<string, string>>({});
+  const [complaintStatuses, setComplaintStatuses] = useState<Record<string, Exclude<ComplaintStatus, "open">>>({});
+  const [complaintDecisionReasons, setComplaintDecisionReasons] = useState<Record<string, string>>({});
+  const [complaintPrivateNotes, setComplaintPrivateNotes] = useState<Record<string, string>>({});
+  const [adminActionId, setAdminActionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -137,7 +222,20 @@ export default function AdminPanel() {
     setLoading(true);
     setError(null);
     const supabase = createClient();
-    const [userResult, doctorCountResult, pendingResult, confirmedResult, doctorResult, appointmentResult, userListResult] =
+    const [
+      userResult,
+      doctorCountResult,
+      pendingResult,
+      confirmedResult,
+      doctorResult,
+      appointmentResult,
+      userListResult,
+      paymentResult,
+      refundResult,
+      complaintResult,
+      refundNotesResult,
+      complaintNotesResult,
+    ] =
       await Promise.all([
         supabase.from("admin_user_directory").select("id", { count: "exact", head: true }),
         supabase.from("doctors").select("id", { count: "exact", head: true }),
@@ -149,6 +247,24 @@ export default function AdminPanel() {
           .select("id, patient_id, doctor_id, appointment_date, appointment_time, patient_message, status, meeting_link, created_at, patient_name, doctor_name")
           .order("created_at", { ascending: false }),
         supabase.from("admin_user_directory").select("id, full_name, created_at").order("created_at", { ascending: false }),
+        supabase
+          .from("consultation_payments")
+          .select("id, appointment_id, patient_id, doctor_id, method, is_simulated, amount, currency, status, status_reason, created_at, updated_at, settled_at")
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("consultation_refund_requests")
+          .select("id, payment_id, appointment_id, patient_id, reason, status, admin_decision_reason, created_at, updated_at, decided_at")
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("consultation_complaints")
+          .select("id, appointment_id, payment_id, patient_id, doctor_id, reason, status, admin_decision_reason, created_at, updated_at, resolved_at")
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("consultation_refund_admin_notes")
+          .select("refund_request_id, notes, updated_at"),
+        supabase
+          .from("consultation_complaint_admin_notes")
+          .select("complaint_id, notes, updated_at"),
       ]);
 
     const failed = [
@@ -176,6 +292,34 @@ export default function AdminPanel() {
     setDoctors((doctorResult.data ?? []) as Doctor[]);
     setAppointments((appointmentResult.data ?? []) as unknown as Appointment[]);
     setUsers((userListResult.data ?? []) as PatientProfile[]);
+    if (paymentResult.error) {
+      setPaymentDataError(`Could not load consultation payments: ${paymentResult.error.message}`);
+    } else {
+      setConsultationPayments((paymentResult.data ?? []) as ConsultationPayment[]);
+      setPaymentDataError(null);
+    }
+    if (refundResult.error) {
+      setRefundDataError(`Could not load refund requests: ${refundResult.error.message}`);
+    } else {
+      setRefundRequests((refundResult.data ?? []) as RefundRequest[]);
+      setRefundDataError(null);
+    }
+    if (complaintResult.error) {
+      setComplaintDataError(`Could not load complaints: ${complaintResult.error.message}`);
+    } else {
+      setComplaints((complaintResult.data ?? []) as Complaint[]);
+      setComplaintDataError(null);
+    }
+    if (!refundNotesResult.error) {
+      setRefundAdminNotes((refundNotesResult.data ?? []) as PrivateAdminNote[]);
+    } else if (!refundResult.error) {
+      setRefundDataError(`Could not load private refund notes: ${refundNotesResult.error.message}`);
+    }
+    if (!complaintNotesResult.error) {
+      setComplaintAdminNotes((complaintNotesResult.data ?? []) as PrivateAdminNote[]);
+    } else if (!complaintResult.error) {
+      setComplaintDataError(`Could not load private complaint notes: ${complaintNotesResult.error.message}`);
+    }
     setMeetingLinks(
       Object.fromEntries(
         ((appointmentResult.data ?? []) as unknown as Appointment[]).map((item) => [
@@ -298,6 +442,135 @@ export default function AdminPanel() {
     await loadData();
   }
 
+  async function resolveDemoPayment(payment: ConsultationPayment, status: "simulated_paid" | "failed") {
+    setError(null);
+    setNotice(null);
+    setAdminActionId(`payment:${payment.id}`);
+    const { error: resolutionError } = await createClient().rpc("resolve_consultation_demo_payment", {
+      p_payment_id: payment.id,
+      p_status: status,
+      p_reason: paymentReasons[payment.id]?.trim() || null,
+    });
+
+    if (resolutionError) {
+      setError(`Could not update demo payment status: ${resolutionError.message}`);
+      setAdminActionId(null);
+      return;
+    }
+
+    setNotice(
+      status === "simulated_paid"
+        ? "Payment marked simulated paid for demo purposes. No real money was transferred."
+        : "Demo payment marked failed. No real money was transferred."
+    );
+    await loadData();
+    setAdminActionId(null);
+  }
+
+  async function resolveRefundRequest(request: RefundRequest, decision: "approved" | "rejected") {
+    const reason = refundDecisionReasons[request.id]?.trim() ?? "";
+    if (reason.length < 1 || reason.length > 2000) {
+      setError("Enter a refund decision reason between 1 and 2000 characters.");
+      setNotice(null);
+      return;
+    }
+
+    setError(null);
+    setNotice(null);
+    setAdminActionId(`refund:${request.id}`);
+    const { error: resolutionError } = await createClient().rpc("resolve_consultation_refund_request", {
+      p_request_id: request.id,
+      p_decision: decision,
+      p_reason: reason,
+    });
+
+    if (resolutionError) {
+      setError(`Could not resolve refund request: ${resolutionError.message}`);
+      setAdminActionId(null);
+      return;
+    }
+
+    setNotice(
+      decision === "approved"
+        ? "Simulated refund approved. The database marked the payment simulated refunded; no money was returned."
+        : "Refund request rejected. No money was transferred or returned."
+    );
+    await loadData();
+    setAdminActionId(null);
+  }
+
+  async function saveRefundPrivateNote(request: RefundRequest) {
+    const notes = refundPrivateNotes[request.id]?.trim() ?? "";
+    if (notes.length < 1 || notes.length > 4000) {
+      setError("Private refund notes must contain between 1 and 4000 characters.");
+      setNotice(null);
+      return;
+    }
+
+    setError(null);
+    setNotice(null);
+    setAdminActionId(`refund-note:${request.id}`);
+    const { error: notesError } = await createClient().rpc("set_consultation_refund_admin_notes", {
+      p_request_id: request.id,
+      p_notes: notes,
+    });
+
+    if (notesError) {
+      setError(`Could not save private refund notes: ${notesError.message}`);
+      setAdminActionId(null);
+      return;
+    }
+
+    setNotice("Private refund investigation note saved for administrators.");
+    await loadData();
+    setAdminActionId(null);
+  }
+
+  async function resolveComplaint(complaint: Complaint) {
+    const status = complaintStatuses[complaint.id] ?? "in_review";
+    const decisionReason = complaintDecisionReasons[complaint.id]?.trim() ?? "";
+    const privateNotes = complaintPrivateNotes[complaint.id]?.trim() ?? "";
+    if (
+      (status === "resolved" || status === "dismissed") &&
+      (decisionReason.length < 1 || decisionReason.length > 2000)
+    ) {
+      setError("A complaint resolution reason between 1 and 2000 characters is required.");
+      setNotice(null);
+      return;
+    }
+    if (privateNotes.length > 4000) {
+      setError("Private complaint notes cannot exceed 4000 characters.");
+      setNotice(null);
+      return;
+    }
+
+    setError(null);
+    setNotice(null);
+    setAdminActionId(`complaint:${complaint.id}`);
+    const { error: resolutionError } = await createClient().rpc("resolve_consultation_complaint", {
+      p_complaint_id: complaint.id,
+      p_status: status,
+      p_decision_reason: decisionReason || null,
+      p_private_notes: privateNotes || null,
+    });
+
+    if (resolutionError) {
+      setError(`Could not update complaint: ${resolutionError.message}`);
+      setAdminActionId(null);
+      return;
+    }
+
+    setNotice(
+      status === "in_review"
+        ? "Complaint moved to in review."
+        : `Complaint marked ${status}.`
+    );
+    await loadData();
+    setAdminActionId(null);
+  }
+
+  const appointmentById = new Map(appointments.map((appointment) => [appointment.id, appointment]));
+  const paymentById = new Map(consultationPayments.map((payment) => [payment.id, payment]));
   const filteredAppointments =
     appointmentFilter === "all"
       ? appointments
@@ -466,6 +739,308 @@ export default function AdminPanel() {
                   </article>
                 ))}
               </div>
+            </section>
+          )}
+
+          {section === "payments" && (
+            <section className="rounded-2xl border border-line bg-white p-5 sm:p-6">
+              <h2 className="font-display text-xl text-ink">Consultation Payments</h2>
+              <p className="mt-1 text-sm text-muted">All payment methods and statuses are simulated. No real money is transferred.</p>
+              {paymentDataError ? (
+                <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{paymentDataError}</p>
+              ) : consultationPayments.length === 0 ? (
+                <p className="mt-4 text-sm text-muted">No consultation payment records.</p>
+              ) : (
+                <div className="mt-4 grid gap-3">
+                  {consultationPayments.map((payment) => {
+                    const appointment = appointmentById.get(payment.appointment_id);
+                    const methodLabel = payment.method === "jazzcash" ? "JazzCash (Demo)" : "Easypaisa (Demo)";
+                    return (
+                      <article key={payment.id} className="rounded-xl border border-line p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="font-medium text-ink">{methodLabel} · {payment.amount} {payment.currency}</p>
+                            <p className="mt-1 text-sm text-muted">
+                              {appointment
+                                ? `${appointment.patient_name || "Patient"} with ${appointment.doctor_name || "Dermatologist"}`
+                                : `Patient ${payment.patient_id} · Doctor ${payment.doctor_id}`}
+                            </p>
+                            {appointment && (
+                              <p className="mt-1 text-sm text-muted">
+                                {formatDate(appointment.appointment_date)} at {formatTime(appointment.appointment_time)}
+                              </p>
+                            )}
+                            <p className="mt-1 text-xs text-muted">Appointment ID: {payment.appointment_id}</p>
+                            <p className="mt-1 text-xs text-muted">Payment ID: {payment.id}</p>
+                            <p className="mt-1 text-xs text-muted">Patient ID: {payment.patient_id} · Doctor ID: {payment.doctor_id}</p>
+                          </div>
+                          <span className={`rounded-full px-3 py-1 text-xs ${consultationStatusStyle(payment.status)}`}>
+                            {payment.status.replaceAll("_", " ")}
+                          </span>
+                        </div>
+                        <div className="mt-3 grid gap-1 text-xs text-muted sm:grid-cols-2">
+                          <p>Created: {formatTimestamp(payment.created_at)}</p>
+                          <p>Updated: {formatTimestamp(payment.updated_at)}</p>
+                          <p>Settled: {formatTimestamp(payment.settled_at)}</p>
+                          <p>{payment.is_simulated ? "Simulated demo record" : "Not marked simulated"}</p>
+                        </div>
+                        {payment.status_reason && <p className="mt-2 text-sm text-ink/80">Status reason: {payment.status_reason}</p>}
+                        {payment.status === "pending" && (
+                          <div className="mt-4 grid gap-3 border-t border-line pt-4">
+                            <label className="text-sm text-ink">
+                              Optional status reason
+                              <textarea
+                                rows={2}
+                                maxLength={2000}
+                                value={paymentReasons[payment.id] ?? ""}
+                                onChange={(event) => setPaymentReasons({ ...paymentReasons, [payment.id]: event.target.value })}
+                                className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+                              />
+                            </label>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                disabled={adminActionId !== null}
+                                onClick={() => void resolveDemoPayment(payment, "simulated_paid")}
+                                className="rounded-lg bg-[#E7F2EA] px-3 py-2 text-xs font-medium text-[#3E7750] disabled:opacity-60"
+                              >
+                                Mark simulated paid
+                              </button>
+                              <button
+                                type="button"
+                                disabled={adminActionId !== null}
+                                onClick={() => void resolveDemoPayment(payment, "failed")}
+                                className="rounded-lg bg-[#F9E8E9] px-3 py-2 text-xs font-medium text-[#A5404A] disabled:opacity-60"
+                              >
+                                Mark failed
+                              </button>
+                              {adminActionId === `payment:${payment.id}` && <span className="self-center text-xs text-muted">Saving…</span>}
+                            </div>
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+
+          {section === "refunds" && (
+            <section className="rounded-2xl border border-line bg-white p-5 sm:p-6">
+              <h2 className="font-display text-xl text-ink">Simulated Refund Requests</h2>
+              <p className="mt-1 text-sm text-muted">Refund decisions are for demo records only. Approval records a simulated refund; no money is returned.</p>
+              {refundDataError ? (
+                <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{refundDataError}</p>
+              ) : refundRequests.length === 0 ? (
+                <p className="mt-4 text-sm text-muted">No refund requests.</p>
+              ) : (
+                <div className="mt-4 grid gap-3">
+                  {refundRequests.map((request) => {
+                    const appointment = appointmentById.get(request.appointment_id);
+                    const payment = paymentById.get(request.payment_id);
+                    const privateNote = refundAdminNotes.find((note) => note.refund_request_id === request.id);
+                    return (
+                      <article key={request.id} className="rounded-xl border border-line p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="font-medium text-ink">
+                              {appointment
+                                ? `${appointment.patient_name || "Patient"} with ${appointment.doctor_name || "Dermatologist"}`
+                                : `Patient ${request.patient_id}`}
+                            </p>
+                            <p className="mt-1 text-sm text-muted">
+                              {appointment
+                                ? `${formatDate(appointment.appointment_date)} at ${formatTime(appointment.appointment_time)}`
+                                : `Appointment ${request.appointment_id}`}
+                            </p>
+                            {payment && (
+                              <p className="mt-1 text-sm text-muted">
+                                Linked payment: {payment.method === "jazzcash" ? "JazzCash (Demo)" : "Easypaisa (Demo)"} · {payment.amount} {payment.currency} · {payment.status.replaceAll("_", " ")}
+                              </p>
+                            )}
+                            <p className="mt-1 text-xs text-muted">Request ID: {request.id} · Payment ID: {request.payment_id}</p>
+                            <p className="mt-1 text-xs text-muted">Patient ID: {request.patient_id} · Appointment ID: {request.appointment_id}</p>
+                          </div>
+                          <span className={`rounded-full px-3 py-1 text-xs ${consultationStatusStyle(request.status)}`}>{request.status}</span>
+                        </div>
+                        <p className="mt-3 whitespace-pre-wrap text-sm text-ink/80">Request reason: {request.reason}</p>
+                        {request.admin_decision_reason && <p className="mt-2 text-sm text-muted">Decision reason: {request.admin_decision_reason}</p>}
+                        <div className="mt-3 grid gap-1 text-xs text-muted sm:grid-cols-2">
+                          <p>Created: {formatTimestamp(request.created_at)}</p>
+                          <p>Updated: {formatTimestamp(request.updated_at)}</p>
+                          <p>Decided: {formatTimestamp(request.decided_at)}</p>
+                        </div>
+                        {privateNote && (
+                          <div className="mt-3 rounded-lg bg-[#F8FAFD] p-3">
+                            <p className="text-xs font-semibold text-ink">Private admin investigation note</p>
+                            <p className="mt-1 whitespace-pre-wrap text-sm text-ink/80">{privateNote.notes}</p>
+                            <p className="mt-1 text-xs text-muted">Updated: {formatTimestamp(privateNote.updated_at)}</p>
+                          </div>
+                        )}
+                        {request.status === "requested" && (
+                          <div className="mt-4 grid gap-3 border-t border-line pt-4">
+                            <label className="text-sm text-ink">
+                              Decision reason (required)
+                              <textarea
+                                rows={2}
+                                maxLength={2000}
+                                value={refundDecisionReasons[request.id] ?? ""}
+                                onChange={(event) => setRefundDecisionReasons({ ...refundDecisionReasons, [request.id]: event.target.value })}
+                                className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+                              />
+                            </label>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                disabled={adminActionId !== null}
+                                onClick={() => void resolveRefundRequest(request, "approved")}
+                                className="rounded-lg bg-[#E7F2EA] px-3 py-2 text-xs font-medium text-[#3E7750] disabled:opacity-60"
+                              >
+                                Approve simulated refund
+                              </button>
+                              <button
+                                type="button"
+                                disabled={adminActionId !== null}
+                                onClick={() => void resolveRefundRequest(request, "rejected")}
+                                className="rounded-lg bg-[#F9E8E9] px-3 py-2 text-xs font-medium text-[#A5404A] disabled:opacity-60"
+                              >
+                                Reject request
+                              </button>
+                              {adminActionId === `refund:${request.id}` && <span className="self-center text-xs text-muted">Saving…</span>}
+                            </div>
+                          </div>
+                        )}
+                        <div className="mt-4 grid gap-3 border-t border-line pt-4">
+                          <label className="text-sm text-ink">
+                            Private investigation note (admin-only; 1–4000 characters)
+                            <textarea
+                              rows={2}
+                              maxLength={4000}
+                              value={refundPrivateNotes[request.id] ?? ""}
+                              onChange={(event) => setRefundPrivateNotes({ ...refundPrivateNotes, [request.id]: event.target.value })}
+                              className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            disabled={adminActionId !== null}
+                            onClick={() => void saveRefundPrivateNote(request)}
+                            className="w-fit rounded-lg border border-line px-3 py-2 text-xs text-ink disabled:opacity-60"
+                          >
+                            Save private note
+                          </button>
+                          {adminActionId === `refund-note:${request.id}` && <span className="text-xs text-muted">Saving private note…</span>}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+
+          {section === "complaints" && (
+            <section className="rounded-2xl border border-line bg-white p-5 sm:p-6">
+              <h2 className="font-display text-xl text-ink">Patient Complaints</h2>
+              <p className="mt-1 text-sm text-muted">Private admin notes are stored separately and are not exposed to patients or doctors.</p>
+              {complaintDataError ? (
+                <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{complaintDataError}</p>
+              ) : complaints.length === 0 ? (
+                <p className="mt-4 text-sm text-muted">No patient complaints.</p>
+              ) : (
+                <div className="mt-4 grid gap-3">
+                  {complaints.map((complaint) => {
+                    const appointment = appointmentById.get(complaint.appointment_id);
+                    const privateNote = complaintAdminNotes.find((note) => note.complaint_id === complaint.id);
+                    const selectedStatus = complaintStatuses[complaint.id] ?? "in_review";
+                    return (
+                      <article key={complaint.id} className="rounded-xl border border-line p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="font-medium text-ink">
+                              {appointment
+                                ? `${appointment.patient_name || "Patient"} with ${appointment.doctor_name || "Dermatologist"}`
+                                : `Doctor ${complaint.doctor_id}`}
+                            </p>
+                            <p className="mt-1 text-sm text-muted">
+                              {appointment
+                                ? `${formatDate(appointment.appointment_date)} at ${formatTime(appointment.appointment_time)}`
+                                : `Appointment ${complaint.appointment_id}`}
+                            </p>
+                            <p className="mt-1 text-xs text-muted">Complaint ID: {complaint.id} · Appointment ID: {complaint.appointment_id}</p>
+                            <p className="mt-1 text-xs text-muted">Patient ID: {complaint.patient_id} · Doctor ID: {complaint.doctor_id}</p>
+                            {complaint.payment_id && <p className="mt-1 text-xs text-muted">Linked payment ID: {complaint.payment_id}</p>}
+                          </div>
+                          <span className={`rounded-full px-3 py-1 text-xs ${consultationStatusStyle(complaint.status)}`}>{complaint.status.replaceAll("_", " ")}</span>
+                        </div>
+                        <p className="mt-3 whitespace-pre-wrap text-sm text-ink/80">Complaint details: {complaint.reason}</p>
+                        {complaint.admin_decision_reason && <p className="mt-2 text-sm text-muted">Decision reason: {complaint.admin_decision_reason}</p>}
+                        <div className="mt-3 grid gap-1 text-xs text-muted sm:grid-cols-2">
+                          <p>Created: {formatTimestamp(complaint.created_at)}</p>
+                          <p>Updated: {formatTimestamp(complaint.updated_at)}</p>
+                          <p>Resolved: {formatTimestamp(complaint.resolved_at)}</p>
+                        </div>
+                        {privateNote && (
+                          <div className="mt-3 rounded-lg bg-[#F8FAFD] p-3">
+                            <p className="text-xs font-semibold text-ink">Private admin investigation note</p>
+                            <p className="mt-1 whitespace-pre-wrap text-sm text-ink/80">{privateNote.notes}</p>
+                            <p className="mt-1 text-xs text-muted">Updated: {formatTimestamp(privateNote.updated_at)}</p>
+                          </div>
+                        )}
+                        {(complaint.status === "open" || complaint.status === "in_review") && (
+                          <div className="mt-4 grid gap-3 border-t border-line pt-4">
+                            <label className="text-sm text-ink">
+                              Complaint status
+                              <select
+                                value={selectedStatus}
+                                onChange={(event) => setComplaintStatuses({
+                                  ...complaintStatuses,
+                                  [complaint.id]: event.target.value as Exclude<ComplaintStatus, "open">,
+                                })}
+                                className="mt-1 block rounded-lg border border-line bg-white px-3 py-2"
+                              >
+                                <option value="in_review">in review</option>
+                                <option value="resolved">resolved</option>
+                                <option value="dismissed">dismissed</option>
+                              </select>
+                            </label>
+                            <label className="text-sm text-ink">
+                              Decision reason {selectedStatus === "in_review" ? "(optional)" : "(required; 1–2000 characters)"}
+                              <textarea
+                                rows={2}
+                                maxLength={2000}
+                                value={complaintDecisionReasons[complaint.id] ?? ""}
+                                onChange={(event) => setComplaintDecisionReasons({ ...complaintDecisionReasons, [complaint.id]: event.target.value })}
+                                className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+                              />
+                            </label>
+                            <label className="text-sm text-ink">
+                              Private admin notes (optional; max 4000 characters)
+                              <textarea
+                                rows={2}
+                                maxLength={4000}
+                                value={complaintPrivateNotes[complaint.id] ?? ""}
+                                onChange={(event) => setComplaintPrivateNotes({ ...complaintPrivateNotes, [complaint.id]: event.target.value })}
+                                className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              disabled={adminActionId !== null}
+                              onClick={() => void resolveComplaint(complaint)}
+                              className="w-fit rounded-lg border border-line px-3 py-2 text-xs text-ink disabled:opacity-60"
+                            >
+                              {selectedStatus === "in_review" ? "Update complaint review" : `${selectedStatus === "resolved" ? "Resolve" : "Dismiss"} complaint`}
+                            </button>
+                            {adminActionId === `complaint:${complaint.id}` && <span className="text-xs text-muted">Saving complaint…</span>}
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
             </section>
           )}
 

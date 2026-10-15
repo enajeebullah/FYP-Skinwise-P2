@@ -1,6 +1,23 @@
 -- Appointment chat messages. Run after migration_add_consultations.sql.
 -- Only the appointment's patient and assigned doctor may read or insert
 -- messages, and only while the appointment is confirmed or completed.
+-- Run this before migration_add_appointment_chat_attachments.sql. The guard
+-- prevents this text-only migration from reverting attachment support.
+
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'appointment_messages'
+      and column_name = 'attachment_storage_path'
+  ) then
+    raise exception
+      'Appointment chat attachments are already configured; do not re-run migration_add_appointment_chat.sql afterward.';
+  end if;
+end;
+$$;
 
 create table if not exists public.appointment_messages (
   id uuid primary key default gen_random_uuid(),
