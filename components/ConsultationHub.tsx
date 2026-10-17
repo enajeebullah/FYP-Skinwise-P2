@@ -321,7 +321,7 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
 
     if (doctorResult.error || appointmentResult.error) {
       const failure = doctorResult.error ?? appointmentResult.error;
-      setError(`Could not load consultations: ${failure.message}`);
+      setError(`Could not load consultations: ${failure?.message ?? "Unknown error"}`);
       setConsultationPayments([]);
       setPaymentError(`Could not verify payment records because consultations could not be loaded: ${failure?.message ?? "Unknown error"}`);
       setRefundLoading(false);

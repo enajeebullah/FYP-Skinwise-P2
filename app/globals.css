@@ -687,6 +687,33 @@ body {
   }
 }
 
+/* Unified Doctor Portal palette. Scoped so patient and admin experiences keep
+   their existing visual language. */
+.doctor-portal .text-ink {
+  color: #243449 !important;
+}
+
+.doctor-portal .text-muted {
+  color: #64748b !important;
+}
+
+.doctor-portal .border-line {
+  border-color: #dce5ef !important;
+}
+
+.doctor-portal .bg-paper {
+  background-color: #f3f7fb !important;
+}
+
+.doctor-portal button:focus-visible,
+.doctor-portal a:focus-visible,
+.doctor-portal input:focus-visible,
+.doctor-portal select:focus-visible,
+.doctor-portal textarea:focus-visible {
+  outline: 3px solid rgba(13, 148, 136, .35);
+  outline-offset: 2px;
+}
+
 @media (max-width: 850px) {
   .app-sidebar {
     flex-basis: 190px;
