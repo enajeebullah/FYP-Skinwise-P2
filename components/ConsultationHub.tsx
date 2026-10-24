@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
 import AppointmentChat from "@/components/AppointmentChat";
+import CallCenter from "@/components/CallCenter";
 
 interface Doctor {
   id: string;
@@ -584,6 +585,7 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
 
   return (
     <main className="dashboard-content animate-fadeUp">
+      <CallCenter />
       <header className="mb-8 rounded-3xl border border-[#D9E8F7] bg-gradient-to-br from-white via-white to-[#EDF6FF] p-6 shadow-sm sm:p-8">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3978C5]">Online care</p>
         <div className="mt-2 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">

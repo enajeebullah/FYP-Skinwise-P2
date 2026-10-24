@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { AppointmentCallButton } from "@/components/CallCenter";
 
 const MAX_MESSAGE_LENGTH = 2000;
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
@@ -67,6 +68,29 @@ interface ChatComposerProps {
   onDraftChange: (value: string) => void;
   onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}
+
+function CallActions({
+  appointmentId,
+  participant,
+}: {
+  appointmentId: string;
+  participant: "your dermatologist" | "the patient";
+}) {
+  return (
+    <div className="mt-4 flex flex-col gap-3 rounded-xl border border-[#B8E5DF] bg-[#E6F7F5] p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <h4 className="text-sm font-semibold text-[#0F766E]">Audio or video consultation</h4>
+        <p className="mt-1 text-xs leading-5 text-[#365568]">
+          Call {participant}. They’ll receive an invitation to accept or reject.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <AppointmentCallButton appointmentId={appointmentId} callMode="audio" />
+        <AppointmentCallButton appointmentId={appointmentId} callMode="video" />
+      </div>
+    </div>
+  );
 }
 
 function validateAttachment(file: File): string | null {
@@ -528,6 +552,9 @@ export default function AppointmentChat({ appointmentId, patientDetails, doctorD
             <div className="mb-4">
               <h3 className="font-display text-xl font-semibold text-[#142B49]">Consultation Chat</h3>
               <p className="mt-1 text-sm text-[#64748B]">Chat with your dermatologist about your skin concerns.</p>
+              {patientDetails.status === "confirmed" && (
+                <CallActions appointmentId={appointmentId} participant="your dermatologist" />
+              )}
             </div>
 
             <div
@@ -638,6 +665,9 @@ export default function AppointmentChat({ appointmentId, patientDetails, doctorD
               <div className="mb-4">
                 <h3 className="font-display text-xl font-semibold text-[#142B49]">Patient Consultation Chat</h3>
                 <p className="mt-1 text-sm text-[#64748B]">A private conversation between you and your patient.</p>
+                {doctorDetails.status === "confirmed" && (
+                  <CallActions appointmentId={appointmentId} participant="the patient" />
+                )}
               </div>
 
               <div

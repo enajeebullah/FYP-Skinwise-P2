@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import AppointmentChat from "@/components/AppointmentChat";
+import CallCenter from "@/components/CallCenter";
 
 type AppointmentStatus = "pending" | "confirmed" | "completed" | "cancelled" | "rejected";
 
@@ -349,6 +350,7 @@ export default function DoctorDashboard({
 
   return (
   <main className="doctor-portal min-h-screen bg-[#F3F7FB] lg:flex">
+    <CallCenter />
     <aside className="flex w-full shrink-0 flex-col bg-[#142B49] text-white lg:sticky lg:top-0 lg:h-screen lg:w-64">
       <div className="flex items-center gap-3 border-b border-white/10 px-5 py-5 lg:px-6">
         <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#0D9488]/20 text-lg font-semibold text-[#7DD3CA]" aria-hidden="true">✦</span>

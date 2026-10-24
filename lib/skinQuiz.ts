@@ -12,17 +12,7 @@ export interface QuizQuestion {
   options: QuizOption[];
 }
 
-// "Final SkinWISE Skin-Type Questionnaire" — a classic dermatology
-// self-assessment style, the same kind used by most skincare-brand
-// "what's your skin type" quizzes. This is a well-established, non-clinical
-// self-report method (not sourced from a specific paper) meant to
-// complement the CNN, not replace it.
-//
-// Question 2 was deliberately changed from "breakout frequency" to "pore
-// visibility" — acne itself is already detected separately by the YOLO11m
-// model, so asking about breakouts here would be redundant. Pore size is a
-// classic, acne-independent skin-type indicator (small pores → drier skin,
-// enlarged/visible pores → oilier skin), so it adds a genuinely new signal.
+
 export const SKIN_QUIZ: QuizQuestion[] = [
   {
     heading: "Midday Skin Feel",
