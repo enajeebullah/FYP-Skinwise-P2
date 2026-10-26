@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 140" fill="none">
+  <defs>
+    <linearGradient id="t" x1="49" y1="29" x2="95" y2="119" gradientUnits="userSpaceOnUse"><stop stop-color="#fff"/><stop offset=".52" stop-color="#fffdf7"/><stop offset="1" stop-color="#f0e3c8"/></linearGradient>
+    <linearGradient id="cap" x1="51" y1="17" x2="93" y2="36" gradientUnits="userSpaceOnUse"><stop stop-color="#e6ce98"/><stop offset="1" stop-color="#b49352"/></linearGradient>
+    <filter id="sh" x="21" y="20" width="100" height="117" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feGaussianBlur stdDeviation="4"/></filter>
+  </defs>
+  <ellipse cx="71" cy="119" rx="32" ry="6" fill="#a88d5a" opacity=".16" filter="url(#sh)"/>
+  <path d="M56 19h28v10H56z" fill="url(#cap)"/>
+  <path d="M60 13h20v7H60z" fill="#bd9d5f"/>
+  <path d="M51 29h38l8 77a9 9 0 0 1-9 10H52a9 9 0 0 1-9-10l8-77Z" fill="url(#t)" stroke="#dcc99e" stroke-width="1.5"/>
+  <path d="m52 58 38-4 4 35-38 4-4-35Z" fill="#f5e9ce"/>
+  <path d="M71 62v-5m0 31v-5M57 74h-5m38 0h-5m-24-10-4-4m28 28-4-4m0-20 4-4M57 88l4-4" stroke="#c4a45f" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="71" cy="74" r="8" fill="#d9bd7e"/>
+  <path d="M56 37c0-2.8 2-5 5-5h2v18c0 3 1 5 3 7h-5c-3 0-5-2.2-5-5V37Z" fill="#fff" opacity=".72"/>
+</svg>

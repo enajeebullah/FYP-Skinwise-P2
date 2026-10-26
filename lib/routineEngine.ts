@@ -106,6 +106,17 @@ function acneCareForNonSevere(
 ): AcneCareItem[] {
   const dry = skinType === "dry";
 
+  if (severity === "clear" && pattern !== "clear") {
+    return [
+      {
+        ingredient: "Acne-care guidance withheld",
+        reason:
+          "The acne pattern and overall severity results are inconsistent, so acne-active recommendations are withheld. Please review the analysis results before using acne-care guidance.",
+        timeOfDay: "AM",
+      },
+    ];
+  }
+
   if (pattern === "clear") return [];
 
   if (severity === "mild") {
@@ -213,6 +224,7 @@ export function generateRoutine({
   let moisturizer: string;
   let moisturizerReason: string;
   const humidity = weather?.humidityPct;
+  const temperature = weather?.temperatureC;
 
   if (skinType === "dry") {
     moisturizer = "More hydrating, ceramide-based cream moisturizer";
@@ -245,6 +257,15 @@ export function generateRoutine({
     }
   }
 
+  if (temperature !== undefined && temperature < 15) {
+    if (skinType === "dry") {
+      moisturizerReason += ` The cooler temperature (${temperature}°C) may make skin feel drier or tighter, so consider a richer layer if needed.`;
+    } else if (skinType === "normal") {
+      moisturizer = "Hydrating, non-comedogenic lotion or cream moisturizer";
+      moisturizerReason += ` At ${temperature}°C, colder weather can increase the risk of dryness or tightness, so a hydrating lotion or cream may help; consider a richer cream if your skin feels dry or tight.`;
+    }
+  }
+
   // ── Sunscreen (skin type + UV) ────────────────────────────────────────────
   const currentHour = new Date().getHours();
   const isNightTime = currentHour < 6 || currentHour >= 20;
@@ -252,20 +273,28 @@ export function generateRoutine({
   let sunscreenReason: string;
   const uv = weather?.uvIndex;
 
-  if (isNightTime) {
-    sunscreen = "Not needed right now (nighttime)";
-    sunscreenReason =
-      "It's currently nighttime, so sunscreen isn't needed right now. Apply a broad-spectrum, non-comedogenic SPF 30+ in the morning based on daytime UV conditions.";
-  } else if (uv !== undefined && uv >= 6) {
-    sunscreen = "Broad-spectrum SPF 50+, non-comedogenic, reapplied every 3 hours outdoors";
-    sunscreenReason = `Current UV index is ${uv} (high) — combined with the predicted ${skinLabel.toLowerCase()} skin type, a non-comedogenic, broad-spectrum SPF 50+ with reapplication is generally suitable.`;
-  } else {
-    sunscreen = "Broad-spectrum SPF 30, non-comedogenic";
-    sunscreenReason =
-      uv !== undefined
-        ? `Current UV index is ${uv} — combined with the predicted ${skinLabel.toLowerCase()} skin type, a non-comedogenic, broad-spectrum SPF 30 is generally suitable as a daily baseline.`
-        : `A non-comedogenic, broad-spectrum SPF 30 is generally suitable daily, matched to the predicted ${skinLabel.toLowerCase()} skin type, regardless of visible UV conditions.`;
-  }
+  
+if (isNightTime) {
+  sunscreen = "Not needed right now (nighttime)";
+  sunscreenReason =
+    "It's currently nighttime, so sunscreen isn't needed right now. Apply a broad-spectrum, non-comedogenic SPF 30+ in the morning based on daytime UV conditions.";
+} else if (uv !== undefined && uv <= 2) {
+  sunscreen = "Broad-spectrum SPF 30, non-comedogenic";
+  sunscreenReason =
+    `Current UV index is ${uv} (low). If you spend time outdoors, use broad-spectrum SPF 30 sunscreen. Choose a non-comedogenic formula suitable for ${skinLabel.toLowerCase()} skin.`;
+} else if (uv !== undefined && uv < 6) {
+  sunscreen = "Broad-spectrum SPF 30+, non-comedogenic";
+  sunscreenReason =
+    `Current UV index is ${uv} (moderate). Broad-spectrum SPF 30+ sunscreen is recommended, especially when spending time outdoors. Choose a non-comedogenic formula suitable for ${skinLabel.toLowerCase()} skin.`;
+} else if (uv !== undefined && uv >= 6) {
+  sunscreen = "Broad-spectrum SPF 50+, non-comedogenic";
+  sunscreenReason =
+    `Current UV index is ${uv} (high or above). Use broad-spectrum SPF 50+ sunscreen and reapply at least every 2 hours outdoors, and after swimming or sweating. Choose a non-comedogenic formula suitable for ${skinLabel.toLowerCase()} skin.`;
+} else {
+  sunscreen = "Broad-spectrum SPF 30+, non-comedogenic";
+  sunscreenReason =
+    `The current UV index is unavailable. Broad-spectrum SPF 30+ is a reasonable daily baseline, particularly when spending time outdoors. Choose a non-comedogenic formula suitable for ${skinLabel.toLowerCase()} skin.`;
+}
 
   // ── Acne-care ingredient information ──────────────────────────────────────
   let acneCare: AcneCareItem[] = [];

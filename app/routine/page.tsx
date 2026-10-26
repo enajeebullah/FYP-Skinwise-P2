@@ -86,8 +86,12 @@ export default async function RoutinePage() {
     routine?.acneCare.filter(
       (item) =>
         item.ingredient !== "No acne-care ingredient needed" &&
-        item.ingredient !== "Recommendation paused"
+        item.ingredient !== "Recommendation paused" &&
+        item.ingredient !== "Acne-care guidance withheld"
     ) ?? [];
+  const acneCareInputInconsistent = routine?.acneCare.find(
+    (item) => item.ingredient === "Acne-care guidance withheld"
+  );
 
   return (
     <AppShell
@@ -291,6 +295,12 @@ export default async function RoutinePage() {
                           accent="evening"
                         />
                       ))
+                    ) : acneCareInputInconsistent ? (
+                      <li className="routine-evening-note">
+                        <strong>Acne-care guidance withheld</strong>
+
+                        <span>{acneCareInputInconsistent.reason}</span>
+                      </li>
                     ) : routine.professionalEvaluationRecommended ? (
                       <li className="routine-evening-note">
                         <strong>
