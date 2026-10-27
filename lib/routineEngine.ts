@@ -65,40 +65,7 @@ const SKIN_TYPE_LABEL: Record<SkinClass, string> = {
   oily: "Oily",
 };
 
-/**
- * The acne-care ingredient matrix — Overall Severity × Pattern × Skin
- * Type. No cell is a fixed "always these ingredients" list; each is
- * chosen and disclosed individually (see README.md's full traceability
- * table):
- *
- *   - Mild → a SINGLE topical agent (AAD 2024's general severity-ladder
- *     principle: mild acne doesn't need combination therapy).
- *   - Moderate → a topical COMBINATION. Where the combination is
- *     Adapalene+Benzoyl peroxide, that pairing is NICE NG198's own
- *     literal "any severity" first-line option — it is NOT invented,
- *     and is applied UNIFORMLY across every moderate pattern (comedonal,
- *     inflammatory, mixed), not just inflammatory — there's no clinical
- *     basis to treat moderate-comedonal differently from
- *     moderate-inflammatory/mixed on this specific point.
- *   - Dry skin substitutes Benzoyl peroxide for Azelaic acid, at BOTH
- *     Mild and Moderate, for EVERY pattern — one single, consistent
- *     substitution rule. This is a SkinWISE clinical-reasoning extension
- *     (BPO's drying/irritant profile is well documented, and NICE itself
- *     lists azelaic acid as a valid alternative when a first-line option
- *     isn't tolerated) — not a NICE-specified skin-type rule, since NICE
- *     doesn't stratify by cosmetic skin type at all. Disclosed as such.
- *   - Salicylic acid is deliberately NOT used as a primary choice — a
- *     Cochrane review found it a less effective comedolytic agent than
- *     topical retinoids, so it isn't given equal footing with Adapalene.
- *   - Severe → no ingredients at all; see generateRoutine() below.
- *
- * Every item also carries a `timeOfDay` ("AM" | "PM") — see the
- * AcneCareItem interface above — so the Routine page can split a
- * two-ingredient combination (e.g. Adapalene + Azelaic acid) into
- * separate Morning/Evening steps instead of applying both actives at
- * once, while a genuine single fixed-combination PRODUCT (Adapalene +
- * Benzoyl peroxide) stays as one PM step.
- */
+
 function acneCareForNonSevere(
   pattern: AcnePattern,
   severity: Exclude<OverallSeverity, "severe">,
@@ -180,15 +147,8 @@ function acneCareForNonSevere(
 
 /**
  * SkinWISE recommendation engine.
- *
- * Skin type decides the BASE cleanser/moisturizer formulation, adjusted
- * by weather. Acne-care ingredient information is chosen from Overall
- * Severity (lib/overallSeverity.ts) AND the detected lesion pattern AND
- * skin type together (see acneCareForNonSevere() above) — never a single
- * fixed list. Overall Severity "severe" withdraws ingredient guidance
- * entirely in favour of a professional-evaluation recommendation;
- * SkinWISE never auto-prescribes oral antibiotics, isotretinoin, or any
- * systemic medication regardless of severity.
+ 
+ 
  */
 export function generateRoutine({
   skinType,

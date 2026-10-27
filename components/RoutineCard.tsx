@@ -247,7 +247,7 @@ export default function RoutineCard({
 
       <p className="text-sm text-ink/60 mb-4">
         What to use, based on your Overall Severity, detected lesion pattern,
-        and predicted skin type
+        and confirmed skin type
         {hasWeather ? ", and local weather" : ""}.
       </p>
 

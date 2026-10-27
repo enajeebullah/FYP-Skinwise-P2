@@ -38,8 +38,10 @@ export default function UploadPanel({ onImageReady }: UploadPanelProps) {
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") inputRef.current?.click();
       }}
-      className={`focus-ring cursor-pointer rounded-2xl border-2 border-dashed p-10 text-center transition-colors ${
-        isDragging ? "border-ink bg-ink/5" : "border-line hover:border-ink/40"
+      className={`scanner-upload-dropzone focus-ring cursor-pointer rounded-2xl border-2 border-dashed p-10 text-center transition-colors ${
+        isDragging
+          ? "scanner-upload-dragging border-ink bg-ink/5"
+          : "border-line hover:border-ink/40"
       }`}
     >
       <input
@@ -50,11 +52,11 @@ export default function UploadPanel({ onImageReady }: UploadPanelProps) {
         onChange={(e) => handleFile(e.target.files?.[0])}
       />
       <svg
-        width="40"
-        height="40"
+        width="30"
+        height="30"
         viewBox="0 0 24 24"
         fill="none"
-        className="mx-auto mb-3 text-muted"
+        className="scanner-upload-icon mx-auto mb-3 text-muted"
         aria-hidden
       >
         <path
@@ -65,8 +67,9 @@ export default function UploadPanel({ onImageReady }: UploadPanelProps) {
           strokeLinejoin="round"
         />
       </svg>
-      <p className="font-medium text-ink">Drop a facial photo here</p>
-      <p className="text-sm text-muted mt-1">Upload a JPG, PNG, or WebP photo</p>
+      <p className="scanner-upload-title font-medium text-ink">Drop your photo here</p>
+      <p className="text-sm text-muted mt-1">JPG, PNG, or WebP · clear, frontal photos work best</p>
+      <span className="scanner-upload-action" aria-hidden="true">Choose a photo</span>
     </div>
   );
 }

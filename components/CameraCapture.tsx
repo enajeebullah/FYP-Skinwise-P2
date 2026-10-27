@@ -61,15 +61,15 @@ export default function CameraCapture({ onImageReady }: CameraCaptureProps) {
 
   if (error) {
     return (
-      <div className="rounded-2xl border border-line bg-panel panel-elevated p-8 text-center">
+      <div className="scanner-camera-error rounded-2xl border border-line bg-panel panel-elevated p-8 text-center">
         <p className="text-sm text-ink/80">{error}</p>
       </div>
     );
   }
 
   return (
-    <div className="rounded-2xl border border-line bg-panel panel-elevated p-6 text-center">
-      <div className="relative w-full max-w-xs mx-auto aspect-square rounded-xl overflow-hidden border border-line bg-ink/5">
+    <div className="scanner-camera-card rounded-2xl border border-line bg-panel panel-elevated p-6 text-center">
+      <div className="scanner-camera-view relative w-full max-w-xs mx-auto aspect-square rounded-xl overflow-hidden border border-line bg-ink/5">
         <video
           ref={videoRef}
           autoPlay
@@ -86,7 +86,7 @@ export default function CameraCapture({ onImageReady }: CameraCaptureProps) {
       <button
         onClick={capture}
         disabled={!ready}
-        className="focus-ring mt-5 inline-flex items-center justify-center rounded-full bg-ink text-paper px-6 py-2.5 text-sm font-medium disabled:opacity-40 transition-opacity hover:opacity-90"
+        className="scanner-capture-button focus-ring mt-5 inline-flex items-center justify-center rounded-full bg-ink text-paper px-6 py-2.5 text-sm font-medium disabled:opacity-40 transition-opacity hover:opacity-90"
       >
         Capture photo
       </button>

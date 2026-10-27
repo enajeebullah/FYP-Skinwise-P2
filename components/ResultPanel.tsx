@@ -1,6 +1,6 @@
 "use client";
 
-import { CLASS_META, CLASS_ORDER, SKIN_LOW_MARGIN_THRESHOLD } from "@/lib/constants";
+import { CLASS_META, CLASS_ORDER, SKIN_LOW_MARGIN_THRESHOLD, type SkinClass } from "@/lib/constants";
 import { getConfidenceMargin, type PredictionResult } from "@/lib/model";
 import ConfidenceBadge from "./ConfidenceBadge";
 import Tooltip from "./Tooltip";
@@ -8,15 +8,22 @@ import Tooltip from "./Tooltip";
 interface ResultPanelProps {
   result: PredictionResult;
   imageSrc: string;
+  showConfidenceDetails?: boolean;
+  displaySkinType?: SkinClass;
 }
 
-export default function ResultPanel({ result, imageSrc }: ResultPanelProps) {
-  const top = CLASS_META[result.topClass];
-  const margin = getConfidenceMargin(result.scores);
+export default function ResultPanel({
+  result,
+  imageSrc,
+  showConfidenceDetails = true,
+  displaySkinType,
+}: ResultPanelProps) {
+  const top = CLASS_META[displaySkinType ?? result.topClass];
+  const margin = showConfidenceDetails ? getConfidenceMargin(result.scores) : 0;
   const isAmbiguous = margin < SKIN_LOW_MARGIN_THRESHOLD;
 
   return (
-    <div className="animate-fadeUp rounded-2xl border border-line bg-panel panel-elevated p-6 sm:p-8">
+    <div className={`animate-fadeUp rounded-2xl border border-line bg-panel panel-elevated p-6 sm:p-8${showConfidenceDetails ? "" : " result-panel-no-confidence"}`}>
       <div className="flex flex-col sm:flex-row gap-6">
         <img
           src={imageSrc}
@@ -26,24 +33,28 @@ export default function ResultPanel({ result, imageSrc }: ResultPanelProps) {
 
         <div className="flex-1">
           <p className="font-mono text-[11px] uppercase tracking-wider text-muted">
-            Scan result
+            {displaySkinType
+              ? "Confirmed skin type"
+              : showConfidenceDetails
+                ? "Scan result"
+                : "AI detection result"}
           </p>
           <h3 className="font-display text-3xl mt-1" style={{ color: top.hex }}>
             {top.label} skin
           </h3>
-          <div className="flex items-center gap-2 mt-1.5">
+          {showConfidenceDetails && <div className="flex items-center gap-2 mt-1.5">
             <span className="text-sm text-muted">
               {(result.topConfidence * 100).toFixed(1)}% confidence
             </span>
             <ConfidenceBadge confidence={result.topConfidence} />
-          </div>
+          </div>}
           <p className="mt-3 text-[15px] leading-relaxed text-ink/80">
             {top.blurb}
           </p>
         </div>
       </div>
 
-      {isAmbiguous && (
+      {showConfidenceDetails && isAmbiguous && (
         <p className="mt-5 text-xs text-ink/70 rounded-lg bg-paper border border-line px-3 py-2">
           The top two skin types are very close ({(margin * 100).toFixed(0)}
           -point gap) — the model isn&rsquo;t confidently picking one. This
@@ -53,7 +64,7 @@ export default function ResultPanel({ result, imageSrc }: ResultPanelProps) {
         </p>
       )}
 
-      <div className="mt-8">
+      {showConfidenceDetails && <div className="mt-8">
         <div className="flex items-center gap-1.5 mb-3">
           <p className="font-mono text-[11px] uppercase tracking-wider text-muted">
             Model confidence
@@ -80,7 +91,7 @@ export default function ResultPanel({ result, imageSrc }: ResultPanelProps) {
             );
           })}
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

@@ -11,7 +11,7 @@ import AnalysisPipeline from "./AnalysisPipeline";
 import TechnicalDetailsCard from "./TechnicalDetailsCard";
 import ImprovementInsights from "./ImprovementInsights";
 import LesionReviewCard from "./LesionReviewCard";
-import { ACNE_CLASS_META, ACNE_CLASS_ORDER, CLASS_META, DEFAULT_SAFETY_FLAGS } from "@/lib/constants";
+import { ACNE_CLASS_META, ACNE_CLASS_ORDER, DEFAULT_SAFETY_FLAGS } from "@/lib/constants";
 import type { SkinClass, SafetyFlags } from "@/lib/constants";
 import type { PredictionResult } from "@/lib/model";
 import type { AcneDetectionResult } from "@/lib/acneModel";
@@ -280,12 +280,16 @@ export default function Dashboard({
 
       <div className="analysis-results-grid">
         <div className="skin-results-overview">
-          <ResultPanel result={skinResult} imageSrc={imageSrc} />
+          <ResultPanel
+            result={skinResult}
+            imageSrc={imageSrc}
+            displaySkinType={confirmedSkinType}
+            showConfidenceDetails={false}
+          />
 
           {confirmedSkinType !== skinResult.topClass && (
             <p className="mt-3 text-xs text-muted">
-              You confirmed this as <strong>{CLASS_META[confirmedSkinType].label.toLowerCase()}</strong> skin
-              via the quiz — the routine below uses that instead of the scan&rsquo;s top result.
+              You selected this skin type, so your routine below uses your confirmed choice.
             </p>
           )}
         </div>
