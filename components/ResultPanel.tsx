@@ -10,6 +10,7 @@ interface ResultPanelProps {
   imageSrc: string;
   showConfidenceDetails?: boolean;
   displaySkinType?: SkinClass;
+  guidance?: { title: string; body: string }[];
 }
 
 export default function ResultPanel({
@@ -17,13 +18,14 @@ export default function ResultPanel({
   imageSrc,
   showConfidenceDetails = true,
   displaySkinType,
+  guidance,
 }: ResultPanelProps) {
   const top = CLASS_META[displaySkinType ?? result.topClass];
   const margin = showConfidenceDetails ? getConfidenceMargin(result.scores) : 0;
   const isAmbiguous = margin < SKIN_LOW_MARGIN_THRESHOLD;
 
   return (
-    <div className={`animate-fadeUp rounded-2xl border border-line bg-panel panel-elevated p-6 sm:p-8${showConfidenceDetails ? "" : " result-panel-no-confidence"}`}>
+    <div className={`result-panel animate-fadeUp rounded-2xl border border-line bg-panel panel-elevated p-6 sm:p-8${showConfidenceDetails ? "" : " result-panel-no-confidence"}`}>
       <div className="flex flex-col sm:flex-row gap-6">
         <img
           src={imageSrc}
@@ -53,6 +55,20 @@ export default function ResultPanel({
           </p>
         </div>
       </div>
+
+      {guidance?.length ? (
+        <section className="skin-guidance" aria-labelledby="skin-guidance-title">
+          <h4 id="skin-guidance-title">Skin care guidance</h4>
+          <div className="skin-guidance-grid">
+            {guidance.map((item) => (
+              <article className="skin-guidance-card" key={item.title}>
+                <strong>{item.title}</strong>
+                <p>{item.body}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {showConfidenceDetails && isAmbiguous && (
         <p className="mt-5 text-xs text-ink/70 rounded-lg bg-paper border border-line px-3 py-2">

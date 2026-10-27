@@ -238,7 +238,7 @@ export default function Dashboard({
   }
 
   return (
-    <div className="dashboard-content animate-fadeUp">
+    <div className="dashboard-content results-dashboard animate-fadeUp">
       <header className="scan-result-header">
         <div className="scan-result-heading">
           <button
@@ -285,6 +285,11 @@ export default function Dashboard({
             imageSrc={imageSrc}
             displaySkinType={confirmedSkinType}
             showConfidenceDetails={false}
+            guidance={[
+              { title: "Cleanser", body: routine.reasons.cleanser },
+              { title: "Moisturizer", body: routine.reasons.moisturizer },
+              { title: "Sun protection", body: routine.reasons.sunscreen },
+            ]}
           />
 
           {confirmedSkinType !== skinResult.topClass && (
@@ -301,6 +306,9 @@ export default function Dashboard({
               <h2>Acne lesion detection</h2>
               <p>Detected lesions are highlighted on your face.</p>
             </div>
+            <span className="lesion-detection-status">
+              {acneResult.total} {acneResult.total === 1 ? "lesion" : "lesions"} detected
+            </span>
           </div>
 
           <AcneCanvas ref={acneCanvasRef} imageSrc={imageSrc} detection={acneResult} />
@@ -342,20 +350,40 @@ export default function Dashboard({
       </div>
 
       <div className="scan-confirm-bar">
-        <p className="text-xs text-muted">
-          {saveStatus === "pending" &&
-            (needsReview
-              ? `${acneResult.total} lesion${acneResult.total === 1 ? "" : "s"} detected — check the counts above and tick "reviewed" before saving.`
-              : "Review the counts above, then confirm to save this scan and see your routine.")}
-          {saveStatus === "saving" && "Saving to your history…"}
-          {saveStatus === "saved" && "✓ Saved to your history"}
-          {saveStatus === "error" && "Couldn't save this scan — check your connection and try again"}
-        </p>
+        <span className="scan-confirm-icon" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none">
+            <path d="M16 3 27 7v8c0 7-4.7 11.5-11 14-6.3-2.5-11-7-11-14V7l11-4Z" fill="currentColor" opacity=".14" />
+            <path d="M16 4.5 25.5 8v7c0 6.1-3.8 10-9.5 12.5C10.3 25 6.5 21.1 6.5 15V8L16 4.5Z" stroke="currentColor" strokeWidth="1.6" />
+            <path d="m11.5 15.5 3 3 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+        <div className="scan-confirm-copy">
+          <strong>
+            {saveStatus === "pending" && needsReview
+              ? `${acneResult.total} ${acneResult.total === 1 ? "lesion" : "lesions"} detected — please review counts`
+              : saveStatus === "saved"
+                ? "Your results are saved"
+                : saveStatus === "saving"
+                  ? "Saving your results"
+                  : saveStatus === "error"
+                    ? "Your results could not be saved"
+                    : "Ready to save your results"}
+          </strong>
+          <p className="text-xs text-muted">
+            {saveStatus === "pending" &&
+              (needsReview
+                ? `${acneResult.total} lesion${acneResult.total === 1 ? "" : "s"} detected — check the counts above and tick "reviewed" before saving.`
+                : "Review the counts above, then confirm to save this scan and see your routine.")}
+            {saveStatus === "saving" && "Saving to your history…"}
+            {saveStatus === "saved" && "✓ Saved to your history"}
+            {saveStatus === "error" && "Couldn't save this scan — check your connection and try again"}
+          </p>
+        </div>
         {saveStatus !== "saved" && (
           <button
             onClick={saveScan}
             disabled={saveStatus === "saving" || needsReview}
-            className="shrink-0 rounded-lg bg-ink text-paper text-sm font-medium px-4 py-2 disabled:opacity-60"
+            className="scan-confirm-button shrink-0 rounded-lg bg-ink text-paper text-sm font-medium px-4 py-2 disabled:opacity-60"
           >
             {saveStatus === "saving" ? "Saving…" : saveStatus === "error" ? "Retry" : "Confirm counts & save"}
           </button>
