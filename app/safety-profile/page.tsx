@@ -43,7 +43,7 @@ export default async function SafetyProfilePage({
       pageTitle={isOnboarding ? "Welcome to SkinWISE" : "Skin profile"}
       showUserMenu={!isOnboarding}
     >
-      <div className="dashboard-content">
+      <div className="dashboard-content safety-profile-page">
         <div className="max-w-2xl mx-auto w-full py-6">
           {!isOnboarding && (
             <a

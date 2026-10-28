@@ -4,11 +4,22 @@ import { redirect } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import { createClient } from "@/lib/supabase/server";
 import { isRoutine } from "@/lib/routineValidation";
+import {
+  activeSafetyReasons,
+  DEFAULT_SAFETY_FLAGS,
+  type SafetyFlags,
+} from "@/lib/constants";
 
 interface SavedRoutineScan {
   created_at: string;
   skin_type: string;
   overall_severity: string;
+  acne_pattern: string | null;
+  weather: {
+    temperatureC: number;
+    humidityPct: number;
+    uvIndex: number;
+  } | null;
   routine: unknown;
 }
 
@@ -25,12 +36,25 @@ function ProductStep({
   instruction: string;
   accent: "morning" | "evening";
 }) {
+  const image =
+    title === "Cleanse"
+      ? "/images/products/cleanser.svg"
+      : title === "Moisturize"
+        ? "/images/products/moisturizer.svg"
+        : title === "Protect"
+          ? "/images/products/sunscreen.svg"
+          : "/images/products/acne-care.svg";
+
   return (
     <li className="routine-step">
       <span
         className={`routine-step-number routine-step-number-${accent}`}
       >
         {number}
+      </span>
+
+      <span className="routine-step-image" aria-hidden="true">
+        <img src={image} alt="" />
       </span>
 
       <div className="routine-step-content">
@@ -41,6 +65,10 @@ function ProductStep({
 
         <p>{instruction}</p>
       </div>
+
+      <span className="routine-step-arrow" aria-hidden="true">
+        ›
+      </span>
     </li>
   );
 }
@@ -58,11 +86,29 @@ export default async function RoutinePage() {
 
   const { data, error } = await supabase
     .from("scans")
-    .select("created_at, skin_type, overall_severity, routine")
+    .select("created_at, skin_type, overall_severity, acne_pattern, weather, routine")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  const { data: profile, error: safetyProfileError } = await supabase
+    .from("profiles")
+    .select("safety_flags")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  const safetyFlags: SafetyFlags = {
+    ...DEFAULT_SAFETY_FLAGS,
+    ...(profile?.safety_flags ?? {}),
+  };
+  const currentSafetyReasons = activeSafetyReasons(safetyFlags);
+  const currentSafetyPauseMessage =
+    currentSafetyReasons.length > 0
+      ? "Your personalised routine is paused because of your Safety Profile: " +
+        currentSafetyReasons.join(" ") +
+        " Your skin type and acne analysis above are unaffected — please consult a healthcare professional before starting a skincare routine."
+      : null;
 
   const scan = data as SavedRoutineScan | null;
 
@@ -89,6 +135,14 @@ export default async function RoutinePage() {
         item.ingredient !== "Recommendation paused" &&
         item.ingredient !== "Acne-care guidance withheld"
     ) ?? [];
+  const morningAcneCareItems = acneCareItems.filter(
+    (item) => item.timeOfDay === "AM"
+  );
+  // Older saved routines may not include timeOfDay. Keep those items in
+  // Evening, matching the legacy timetable behavior.
+  const eveningAcneCareItems = acneCareItems.filter(
+    (item) => item.timeOfDay !== "AM"
+  );
   const acneCareInputInconsistent = routine?.acneCare.find(
     (item) => item.ingredient === "Acne-care guidance withheld"
   );
@@ -100,18 +154,18 @@ export default async function RoutinePage() {
       fullName={user.user_metadata?.full_name ?? null}
       pageTitle="Your routine"
     >
-      <main className="dashboard-content routine-guide-page">
+      <main className="dashboard-content routine-guide-page daily-routine-page">
         <header className="routine-guide-hero">
           <div>
             <p className="routine-guide-eyebrow">
-              YOUR DAILY SKINCARE PLAN
+              YOUR PERSONALIZED PLAN
             </p>
 
-            <h1>Simple steps, morning to night</h1>
+            <h1>Your Skincare Routine</h1>
 
             <p>
-              Follow the order below using the products selected for your
-              latest confirmed scan.
+              Follow this routine daily. It reflects your latest confirmed
+              scan and its saved recommendations.
             </p>
           </div>
 
@@ -130,6 +184,17 @@ export default async function RoutinePage() {
           >
             <h2>We couldn’t load your routine</h2>
             <p>{error.message}</p>
+          </section>
+        ) : safetyProfileError ? (
+          <section
+            className="routine-guide-state routine-guide-error"
+            role="alert"
+          >
+            <h2>We couldn’t verify your Safety Profile</h2>
+            <p>
+              Personalized routine steps are hidden until your saved safety
+              settings can be checked. Refresh this page and try again.
+            </p>
           </section>
         ) : !scan ? (
           <section className="routine-guide-state">
@@ -173,11 +238,35 @@ export default async function RoutinePage() {
         ) : (
           <>
             <div className="routine-guide-meta">
-              <span>{scan.skin_type} skin</span>
+              <span className="routine-meta-item">
+                <small>Skin type</small>
+                <strong>{scan.skin_type}</strong>
+              </span>
 
-              <span>{scan.overall_severity} severity</span>
+              {scan.acne_pattern && (
+                <span className="routine-meta-item">
+                  <small>Acne pattern</small>
+                  <strong>{scan.acne_pattern.replace(/_/g, " ")}</strong>
+                </span>
+              )}
 
-              <span>
+              <span className="routine-meta-item">
+                <small>Severity</small>
+                <strong>{scan.overall_severity}</strong>
+              </span>
+
+              {scan.weather && (
+                <span className="routine-meta-item">
+                  <small>Weather at scan</small>
+                  <strong>
+                    {Math.round(scan.weather.temperatureC)}°C · RH{" "}
+                    {Math.round(scan.weather.humidityPct)}% · UV{" "}
+                    {scan.weather.uvIndex}
+                  </strong>
+                </span>
+              )}
+
+              <span className="routine-meta-date">
                 Latest scan ·{" "}
                 {new Date(scan.created_at).toLocaleDateString(
                   undefined,
@@ -190,7 +279,7 @@ export default async function RoutinePage() {
               </span>
             </div>
 
-            {routine.recommendationPaused ? (
+            {currentSafetyReasons.length > 0 || routine.recommendationPaused ? (
               <section className="routine-guide-alert routine-guide-paused">
                 <span
                   className="routine-guide-alert-icon"
@@ -202,7 +291,25 @@ export default async function RoutinePage() {
                 <div>
                   <h2>Personalised steps are paused</h2>
 
-                  <p>{routine.reasons.cleanser}</p>
+                  <p>
+                    {currentSafetyPauseMessage ??
+                      "This saved routine was paused when its scan was saved."}
+                  </p>
+                  {currentSafetyReasons.length === 0 && (
+                    <>
+                      <p>
+                        Its original personalized recommendations are
+                        unavailable. A new scan may be required to generate
+                        an updated routine for your current Safety Profile.
+                      </p>
+                      <Link
+                        className="routine-guide-link-button"
+                        href="/#scanner"
+                      >
+                        Start a new scan
+                      </Link>
+                    </>
+                  )}
                 </div>
               </section>
             ) : (
@@ -219,6 +326,8 @@ export default async function RoutinePage() {
                       <p>START YOUR DAY</p>
                       <h2>Morning</h2>
                     </div>
+
+                    <span className="routine-time-period">AM</span>
                   </div>
 
                   <ol>
@@ -230,8 +339,24 @@ export default async function RoutinePage() {
                       accent="morning"
                     />
 
+                    {morningAcneCareItems.map((item, index) => (
+                      <ProductStep
+                        key={`${item.ingredient}-${index}`}
+                        number={String(index + 2).padStart(2, "0")}
+                        title="Acne care"
+                        product={item.ingredient}
+                        instruction={`Use only as directed on the product label.${
+                          item.usageTip ? ` ${item.usageTip}` : ""
+                        }`}
+                        accent="morning"
+                      />
+                    ))}
+
                     <ProductStep
-                      number="02"
+                      number={String(morningAcneCareItems.length + 2).padStart(
+                        2,
+                        "0"
+                      )}
                       title="Moisturize"
                       product={routine.moisturizer}
                       instruction="Smooth a comfortable layer over your face and let it absorb."
@@ -239,7 +364,10 @@ export default async function RoutinePage() {
                     />
 
                     <ProductStep
-                      number="03"
+                      number={String(morningAcneCareItems.length + 3).padStart(
+                        2,
+                        "0"
+                      )}
                       title="Protect"
                       product={routine.sunscreen}
                       instruction="Apply as the final morning step, following the product label."
@@ -265,6 +393,8 @@ export default async function RoutinePage() {
                       <p>WIND DOWN</p>
                       <h2>Evening</h2>
                     </div>
+
+                    <span className="routine-time-period">PM</span>
                   </div>
 
                   <ol>
@@ -280,8 +410,8 @@ export default async function RoutinePage() {
 
                     {/* Acne-care steps */}
 
-                    {acneCareItems.length > 0 ? (
-                      acneCareItems.map((item, index) => (
+                    {eveningAcneCareItems.length > 0 ? (
+                      eveningAcneCareItems.map((item, index) => (
                         <ProductStep
                           key={`${item.ingredient}-${index}`}
                           number={String(index + 2).padStart(2, "0")}
@@ -311,7 +441,7 @@ export default async function RoutinePage() {
                           {routine.professionalEvaluationReason}
                         </span>
                       </li>
-                    ) : (
+                    ) : morningAcneCareItems.length > 0 ? null : (
                       <li className="routine-evening-note">
                         <strong>
                           No acne-care step needed
@@ -328,7 +458,7 @@ export default async function RoutinePage() {
 
                     <ProductStep
                       number={String(
-                        acneCareItems.length + 2
+                        eveningAcneCareItems.length + 2
                       ).padStart(2, "0")}
                       title="Moisturize"
                       product={routine.moisturizer}

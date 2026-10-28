@@ -353,7 +353,7 @@ export default function RoutineCard({
           {rows.map((row) => (
             <div
               key={row.key}
-              className="flex min-w-0 items-center gap-4 rounded-xl border border-line/80 bg-paper/60 p-3 sm:p-4"
+              className="routine-product-card flex min-w-0 items-center gap-4 rounded-xl border border-line/80 bg-paper/60 p-3 sm:p-4"
             >
               <ProductImageButton
                 src={row.image}
@@ -381,7 +381,7 @@ export default function RoutineCard({
           ))}
 
           {!routine.professionalEvaluationRecommended && (
-            <div className="flex min-w-0 items-center gap-4 rounded-xl border border-line/80 bg-paper/60 p-3 sm:p-4">
+            <div className="routine-product-card flex min-w-0 items-center gap-4 rounded-xl border border-line/80 bg-paper/60 p-3 sm:p-4">
               <ProductImageButton
                 src="/images/products/acne-care.png"
                 alt="Generic illustration of an acne-care treatment bottle; not a specific brand or verified product."
@@ -424,7 +424,7 @@ export default function RoutineCard({
       )}
 
       {!routine.recommendationPaused && (
-        <section className="mt-6 rounded-xl border border-[#8995d5]/25 bg-[#8995d5]/[0.06] px-4 py-4 sm:px-5" aria-labelledby="skincare-guidance-heading">
+        <section className="routine-guidance-card mt-6 rounded-xl border border-[#8995d5]/25 bg-[#8995d5]/[0.06] px-4 py-4 sm:px-5" aria-labelledby="skincare-guidance-heading">
           <div className="flex items-start gap-3">
             <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full border border-[#8995d5]/25 bg-white/70 text-sm font-semibold text-[#6574d1]" aria-hidden="true">i</span>
             <div className="min-w-0">

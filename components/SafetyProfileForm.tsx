@@ -48,8 +48,8 @@ export default function SafetyProfileForm({
     setStatus("saved");
     if (isOnboarding) {
       router.push("/");
-      router.refresh();
     }
+    router.refresh();
   }
 
   async function handleSkip() {
@@ -70,13 +70,13 @@ export default function SafetyProfileForm({
   }
 
   return (
-    <div className="rounded-2xl border border-line bg-panel panel-elevated p-6 sm:p-8 space-y-4">
+    <div className="safety-profile-form rounded-2xl border border-line bg-panel panel-elevated p-6 sm:p-8 space-y-4">
       {(Object.keys(SAFETY_FLAG_META) as (keyof SafetyFlags)[]).map((key) => {
         const meta = SAFETY_FLAG_META[key];
         return (
           <label
             key={key}
-            className="flex items-start gap-3 rounded-xl border border-line p-4 cursor-pointer hover:bg-paper transition-colors"
+            className="safety-flag-option flex items-start gap-3 rounded-xl border border-line p-4 cursor-pointer hover:bg-paper transition-colors"
           >
             <input
               type="checkbox"
@@ -89,7 +89,7 @@ export default function SafetyProfileForm({
         );
       })}
 
-      <div className="flex flex-wrap items-center gap-4 pt-2">
+      <div className="safety-profile-actions flex flex-wrap items-center gap-4 pt-2">
         <button
           onClick={handleSave}
           disabled={status === "saving" || skipping}

@@ -390,6 +390,7 @@ export default function Dashboard({
         )}
       </div>
 
+      <div className={`dashboard-overview-grid${previousScan ? " has-previous-scan" : ""}`}>
       <section className="severity-results-card" aria-labelledby="severity-title">
         <div className="severity-results-heading">
           <span className="severity-results-icon" aria-hidden="true">✧</span>
@@ -425,6 +426,8 @@ export default function Dashboard({
         />
       )}
 
+      </div>
+
       <div id="weather" className="weather-section">
         <WeatherCard onWeatherReady={handleWeatherReady} />
       </div>
@@ -439,24 +442,21 @@ export default function Dashboard({
         reviewed={reviewed || acneResult.total === 0}
       />
 
-      <p className="text-xs text-muted -mt-4">
-        <a href="/safety-profile" className="underline underline-offset-4 hover:text-ink">
-          Manage your Safety Profile
-        </a>{" "}
-        — update this anytime if your situation changes.
-      </p>
-
       <TechnicalDetailsCard skinInferenceMs={skinInferenceMs} acneInferenceMs={acneInferenceMs} />
 
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={onReset}
-            className="focus-ring text-sm font-medium underline underline-offset-4 text-ink/70 hover:text-ink"
-          >
-            Scan another photo
-          </button>
-        </div>
+      <div className="dashboard-quick-actions">
+        <p className="dashboard-safety-action text-xs text-muted">
+          <a href="/safety-profile" className="underline underline-offset-4 hover:text-ink">
+            Manage your Safety Profile
+          </a>{" "}
+          — update this anytime if your situation changes.
+        </p>
+        <button
+          onClick={onReset}
+          className="dashboard-scan-action focus-ring text-sm font-medium underline underline-offset-4 text-ink/70 hover:text-ink"
+        >
+          Scan another photo
+        </button>
       </div>
     </div>
   );
