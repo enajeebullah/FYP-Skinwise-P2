@@ -44,20 +44,17 @@ export default async function SafetyProfilePage({
       showUserMenu={!isOnboarding}
     >
       <div className="dashboard-content safety-profile-page">
-        <div className="max-w-2xl mx-auto w-full py-6">
-          {!isOnboarding && (
-            <a
-              href="/"
-              className="inline-flex items-center gap-1.5 text-sm text-ink/60 hover:text-ink transition-colors mb-6 focus-ring rounded"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-                <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <div className="safety-profile-card">
+          <div className="safety-profile-intro">
+            <div className="safety-profile-shield" aria-hidden="true">
+              <svg viewBox="0 0 64 64" fill="none">
+                <path d="M32 5 53 13v16c0 14-8.6 23.5-21 30C19.6 52.5 11 43 11 29V13L32 5Z" fill="currentColor" opacity=".16" />
+                <path d="M32 8 50 15v14c0 12-7.2 20.4-18 26.3C21.2 49.4 14 41 14 29V15l18-7Z" fill="currentColor" />
+                <path d="m23 31 6 6 13-14" stroke="white" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-              Back to home
-            </a>
-          )}
-
-          <p className="font-mono text-xs uppercase tracking-wider text-muted mb-2">
+            </div>
+            <div className="safety-profile-intro-copy">
+          <p className="safety-profile-eyebrow">
             {isOnboarding ? "Welcome to SkinWISE" : "Your account"}
           </p>
           {isOnboarding && (
@@ -67,16 +64,44 @@ export default async function SafetyProfilePage({
               <li><span>3</span> First scan</li>
             </ol>
           )}
-          <h1 className="font-display text-3xl mb-2">
-            {isOnboarding ? "Quick safety check, before your first scan" : "Safety profile"}
+          <h1>
+            {isOnboarding ? "Quick safety check, before your first scan" : "Safety Profile"}
           </h1>
-          <p className="text-sm text-ink/70 mb-8 max-w-lg">
+          <p className="safety-profile-description">
             These answers help SkinWISE decide when to pause your personalised
             routine — cleanser, moisturizer, sun protection, and ingredient
             guidance. Your skin type and acne analysis always run normally
             regardless. You can update this anytime from the Safety Profile
             link in the menu.
           </p>
+            </div>
+            <aside className="safety-profile-privacy">
+              <span aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M12 3 20 6v6c0 5-3.3 8-8 10-4.7-2-8-5-8-10V6l8-3Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+                  <rect x="8.5" y="10.5" width="7" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.7" />
+                  <path d="M10 10.5V9a2 2 0 1 1 4 0v1.5M12 12.5v1.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                </svg>
+              </span>
+              <div>
+                <strong>Your health information</strong>
+                <p>Your responses help inform personalized skincare recommendations.</p>
+              </div>
+            </aside>
+          </div>
+
+          <section className="safety-profile-section-heading">
+            <span aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="8" r="3.2" stroke="currentColor" strokeWidth="1.8" />
+                <path d="M5.5 20c.7-3.5 3-5.3 6.5-5.3s5.8 1.8 6.5 5.3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              </svg>
+            </span>
+            <div>
+              <h2>Medical &amp; Health Information</h2>
+              <p>Select all that apply. This helps us avoid unsuitable recommendations and ensure your safety.</p>
+            </div>
+          </section>
 
           <SafetyProfileForm
             userId={user.id}
@@ -84,12 +109,6 @@ export default async function SafetyProfilePage({
             isOnboarding={isOnboarding}
           />
 
-          <p className="text-xs text-muted mt-8 border-t border-line pt-6">
-            This is not a medical safety check. If you have any skin condition,
-            open wound, or are taking medication, please consult a licensed
-            healthcare professional before starting or changing any skincare
-            routine.
-          </p>
         </div>
       </div>
     </AppShell>

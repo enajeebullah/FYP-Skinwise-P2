@@ -498,6 +498,48 @@ export default async function RoutinePage() {
               products cautiously, and check with a healthcare professional
               if you are unsure what is suitable for you.
             </p>
+
+            <section
+              className="routine-important-guidance"
+              aria-labelledby="routine-important-guidance-title"
+            >
+              <h2 id="routine-important-guidance-title">
+                Important Skincare Guidance
+              </h2>
+              <p>
+                SkinWISE provides general skincare guidance, not a medical
+                diagnosis or prescription.
+              </p>
+              <ul>
+                <li>
+                  <strong>Use products carefully:</strong> Follow label
+                  instructions, introduce new products gradually, and
+                  patch-test where appropriate.
+                </li>
+                <li>
+                  <strong>Watch for irritation:</strong> Adapalene and
+                  benzoyl peroxide may cause dryness, redness, or peeling.
+                  Stop use and seek professional advice if irritation is
+                  severe or persistent.
+                </li>
+                <li>
+                  <strong>Check safety first:</strong> Avoid adapalene during
+                  pregnancy or when planning pregnancy. Consult a healthcare
+                  professional if pregnant or breastfeeding before starting
+                  acne treatments.
+                </li>
+                <li>
+                  <strong>Know when to seek help:</strong> Consult a
+                  dermatologist for painful, deep, persistent acne or
+                  scarring. Seek emergency help for difficulty breathing or
+                  swelling of the face or throat.
+                </li>
+              </ul>
+              <p className="routine-important-guidance-note">
+                When unsure, ask a pharmacist or qualified healthcare
+                professional.
+              </p>
+            </section>
           </>
         )}
       </main>
