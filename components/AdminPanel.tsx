@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
+import UserMenu from "@/components/UserMenu";
 
 type Section = "overview" | "doctors" | "appointments" | "payments" | "refunds" | "complaints" | "users";
 type AppointmentStatus = "pending" | "confirmed" | "completed" | "cancelled" | "rejected";
@@ -183,7 +184,25 @@ function formatTimestamp(value: string | null) {
   return value ? new Date(value).toLocaleString() : "—";
 }
 
-export default function AdminPanel() {
+interface AdminPanelProps {
+  email?: string;
+  fullName?: string | null;
+}
+
+function AdminIcon({ section }: { section: Section }) {
+  const paths: Record<Section, ReactNode> = {
+    overview: <><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1V10Z" /><path d="M9 21v-7h6v7" /></>,
+    doctors: <><path d="M8 3v5a4 4 0 0 0 8 0V3M6 3h4M14 3h4M12 12v2a4 4 0 0 0 8 0v-1" /><circle cx="20" cy="11" r="1.5" /></>,
+    appointments: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18M8 14h3M8 17h6" /></>,
+    payments: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 10h18M7 15h4" /></>,
+    refunds: <><path d="M4 7v5h5M20 17v-5h-5" /><path d="M5.5 12a7 7 0 0 1 12-4L20 11M18.5 12a7 7 0 0 1-12 4L4 13" /></>,
+    complaints: <><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H7l-3 2v-5.5a7.5 7.5 0 1 1 16-4Z" /><path d="M9 10h6M9 13h4" /></>,
+    users: <><circle cx="9" cy="8" r="3" /><path d="M3 20c.5-3.5 2.5-5 6-5s5.5 1.5 6 5M16 5a3 3 0 0 1 0 6M17 15c2.5.3 3.7 1.8 4 4" /></>,
+  };
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[section]}</svg>;
+}
+
+export default function AdminPanel({ email = "", fullName = null }: AdminPanelProps = {}) {
   const [section, setSection] = useState<Section>("overview");
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -576,36 +595,57 @@ export default function AdminPanel() {
       ? appointments
       : appointments.filter((appointment) => appointment.status === appointmentFilter);
 
-  return (
-    <main className="dashboard-content animate-fadeUp">
-      <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className="eyebrow">SKINWISE ADMIN</p>
-          <h1 className="font-display text-3xl text-ink">Administration</h1>
-          <p className="mt-1 text-sm text-muted">Manage consultations and dermatologist listings.</p>
-        </div>
-        <button type="button" onClick={() => void loadData()} className="rounded-lg border border-line bg-white px-4 py-2 text-sm text-ink hover:bg-paper">
-          Refresh data
-        </button>
-      </header>
+  const openComplaints = complaintDataError ? null : complaints.filter((complaint) => complaint.status === "open" || complaint.status === "in_review").length;
+  const appointmentStatusCounts = statuses.reduce<Record<AppointmentStatus, number>>((result, status) => {
+    result[status] = appointments.filter((appointment) => appointment.status === status).length;
+    return result;
+  }, { pending: 0, confirmed: 0, completed: 0, cancelled: 0, rejected: 0 });
+  const chartStatuses: AppointmentStatus[] = ["confirmed", "pending", "completed", "cancelled", "rejected"];
+  const appointmentTotal = appointments.length;
+  const chartColors: Record<AppointmentStatus, string> = {
+    confirmed: "#7964e8", pending: "#63a4f5", completed: "#43c7a6", cancelled: "#c9cadd", rejected: "#f28b8b",
+  };
+  const chartGradient = `conic-gradient(${chartStatuses.map((status, index) => {
+    const start = chartStatuses.slice(0, index).reduce((sum, item) => sum + appointmentStatusCounts[item], 0);
+    const end = start + appointmentStatusCounts[status];
+    const from = appointmentTotal ? (start / appointmentTotal) * 100 : 0;
+    const to = appointmentTotal ? (end / appointmentTotal) * 100 : 0;
+    return `${chartColors[status]} ${from}% ${to}%`;
+  }).join(", ")})`;
 
-      <nav className="mb-6 flex flex-wrap gap-2" aria-label="Administration sections">
+  return (
+    <div className="admin-layout">
+      <aside className="admin-sidebar">
+        <a href="/" className="admin-brand" aria-label="SkinWISE home">
+          <span className="admin-brand-mark" aria-hidden="true">✦</span>
+          <span><strong>SkinWISE</strong><small>Smart Skin Health<br />Management</small></span>
+        </a>
+        <nav className="admin-nav" aria-label="Administration sections">
         {sections.map((item) => (
           <button
             key={item.id}
             type="button"
             onClick={() => setSection(item.id)}
             aria-current={section === item.id ? "page" : undefined}
-            className={`rounded-full border px-4 py-2 text-sm transition ${
+            className={`admin-nav-link ${
               section === item.id
-                ? "border-[#4C9BE4] bg-[#E4F0FF] font-semibold text-[#175BB3]"
-                : "border-line bg-white text-muted hover:text-ink"
+                ? "active"
+                : ""
             }`}
           >
-            {item.label}
+            <AdminIcon section={item.id} />{item.label}
           </button>
         ))}
       </nav>
+        <div className="admin-sidebar-foot"><span className="admin-sidebar-orbit" aria-hidden="true">◌</span><p>Healthy Skin<br />Happier You</p><small>SkinWISE © 2026</small></div>
+      </aside>
+
+      <main className="admin-main">
+      <header className="admin-topbar">
+        <div><p className="admin-kicker">SKINWISE ADMIN</p><h1>Admin Dashboard</h1><p>Overview of your SkinWISE platform</p></div>
+        <div className="admin-topbar-tools"><button type="button" onClick={() => void loadData()} className="admin-refresh" aria-label="Refresh administration data">↻</button><UserMenu email={email} fullName={fullName} /></div>
+      </header>
+      <div className="admin-content">
 
       {error && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</p>}
       {notice && <p role="status" className="mb-4 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">{notice}</p>}
@@ -614,24 +654,35 @@ export default function AdminPanel() {
       ) : (
         <>
           {section === "overview" && (
-            <section aria-label="Dashboard overview">
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <section className="admin-overview" aria-label="Dashboard overview">
+              <div className="admin-stat-grid">
                 {[
-                  ["Total users", counts.users],
-                  ["Dermatologists", counts.doctors],
-                  ["Pending appointments", counts.pending],
-                  ["Confirmed appointments", counts.confirmed],
-                ].map(([label, value]) => (
-                  <article key={label} className="rounded-2xl border border-line bg-white p-5 shadow-sm">
-                    <p className="text-sm text-muted">{label}</p>
-                    <p className="mt-2 font-display text-3xl text-ink">{value}</p>
+                  { label: "Total users", value: counts.users, icon: "♙", tone: "violet" },
+                  { label: "Dermatologists", value: counts.doctors, icon: "✚", tone: "blue" },
+                  { label: "Pending appointments", value: counts.pending, icon: "▦", tone: "orange" },
+                  { label: "Open complaints", value: openComplaints ?? "—", icon: "☏", tone: "green" },
+                ].map((stat) => (
+                  <article key={stat.label} className={`admin-stat-card ${stat.tone}`}>
+                    <span className="admin-stat-icon" aria-hidden="true">{stat.icon}</span>
+                    <div><p>{stat.label}</p><strong>{stat.value}</strong></div>
+                    <span className="admin-stat-caption">Current total</span>
                   </article>
                 ))}
               </div>
-              <section className="mt-6 rounded-2xl border border-line bg-white p-5 sm:p-6">
-                <h2 className="font-display text-xl text-ink">Recent appointments</h2>
-                <AppointmentTable appointments={appointments.slice(0, 5)} />
-              </section>
+              <div className="admin-insight-grid">
+                <section className="admin-card admin-appointments-overview">
+                  <div className="admin-card-heading"><h2><AdminIcon section="appointments" />Appointments Overview</h2><button type="button" onClick={() => setSection("appointments")}>View all →</button></div>
+                  {appointmentTotal ? <div className="admin-chart-layout"><div className="admin-donut" style={{ background: chartGradient }} role="img" aria-label={`${appointmentTotal} appointments by status`}><div><strong>{appointmentTotal}</strong><span>Total</span></div></div><ul className="admin-chart-legend">{chartStatuses.filter((status) => appointmentStatusCounts[status] > 0).map((status) => <li key={status}><i style={{ background: chartColors[status] }} />{status}<strong>{appointmentStatusCounts[status]}</strong></li>)}</ul></div> : <p className="admin-empty-chart">No appointment records to summarize.</p>}
+                </section>
+                <section className="admin-card admin-activity-card">
+                  <div className="admin-card-heading"><h2><span aria-hidden="true">▥</span>Recent Activity</h2><span className="admin-data-label">Latest appointment records</span></div>
+                  {appointments.length ? <ul className="admin-activity-list">{appointments.slice(0, 4).map((appointment) => <li key={appointment.id}><span className="admin-activity-icon"><AdminIcon section="appointments" /></span><span className="admin-activity-copy"><strong>{appointment.patient_name || "Patient"} · {appointment.status.replaceAll("_", " ")}</strong><small>{appointment.doctor_name} · {formatDate(appointment.appointment_date)}</small></span><span className={`admin-activity-tag ${appointment.status}`}>Appointment</span></li>)}</ul> : <p className="admin-empty-chart">No recent appointment records.</p>}
+                </section>
+              </div>
+              <div className="admin-bottom-grid">
+                <section className="admin-card admin-recent-table"><div className="admin-card-heading"><h2><AdminIcon section="appointments" />Recent Appointments</h2><button type="button" onClick={() => setSection("appointments")}>View all →</button></div><AppointmentTable appointments={appointments.slice(0, 5)} /></section>
+                <aside className="admin-side-widgets"><section className="admin-system-card"><div className="admin-system-icon">✓</div><div><h2>System Status</h2><p><i />{error || loading ? "Checking data access" : "Admin data loaded"}</p><small>Based on current admin queries</small></div></section><section className="admin-quick-card"><h2>Quick Actions</h2><button type="button" onClick={() => { setSection("doctors"); setEditingDoctor(null); setDoctorForm(EMPTY_DOCTOR); }}>＋ Add dermatologist</button><button type="button" onClick={() => setSection("appointments")}>▦ Manage appointments</button><button type="button" onClick={() => setSection("complaints")}>☏ View complaints</button></section></aside>
+              </div>
             </section>
           )}
 
@@ -1061,26 +1112,20 @@ export default function AdminPanel() {
           )}
         </>
       )}
-    </main>
+      </div>
+      </main>
+    </div>
   );
 }
 
 function AppointmentTable({ appointments }: { appointments: Appointment[] }) {
   if (!appointments.length) {
-    return <p className="mt-4 text-sm text-muted">No appointments have been requested yet.</p>;
+    return <p className="admin-table-empty">No appointments have been requested yet.</p>;
   }
 
   return (
-    <div className="mt-4 grid gap-3">
-      {appointments.map((appointment) => (
-        <article key={appointment.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line px-4 py-3">
-          <div>
-            <p className="text-sm font-medium text-ink">{appointment.patient_name || "Patient"} · {appointment.doctor_name || "Dermatologist"}</p>
-            <p className="mt-1 text-xs text-muted">{formatDate(appointment.appointment_date)} at {formatTime(appointment.appointment_time)}</p>
-          </div>
-          <span className={`rounded-full px-3 py-1 text-xs capitalize ${statusStyle(appointment.status)}`}>{appointment.status}</span>
-        </article>
-      ))}
-    </div>
+    <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Patient</th><th>Dermatologist</th><th>Date &amp; time</th><th>Status</th></tr></thead><tbody>
+      {appointments.map((appointment) => <tr key={appointment.id}><td><span className="admin-patient-cell"><i>{(appointment.patient_name || "P").slice(0, 1).toUpperCase()}</i>{appointment.patient_name || "Patient"}</span></td><td>{appointment.doctor_name || "Dermatologist"}</td><td>{formatDate(appointment.appointment_date)} · {formatTime(appointment.appointment_time)}</td><td><span className={`admin-table-status ${appointment.status}`}>{appointment.status}</span></td></tr>)}
+    </tbody></table></div>
   );
 }
