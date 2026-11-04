@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DailyCall, DailyEventObject } from "@daily-co/daily-js";
+import { createClient } from "@/lib/supabase/client";
 
 type CallStatus = "ringing" | "accepted" | "active" | "rejected" | "missed" | "ended" | "failed";
 export type CallMode = "audio" | "video";
@@ -99,6 +100,7 @@ export default function CallCenter() {
   const sessionRef = useRef<CallSession | null>(null);
   const busyRef = useRef(false);
   const pollInFlightRef = useRef(false);
+  const reconcileQueuedRef = useRef(false);
 
   useEffect(() => {
     sessionRef.current = session;
@@ -168,6 +170,7 @@ export default function CallCenter() {
       };
       if (!result.session?.id) throw new Error("The call session response was incomplete.");
       const nextSession: CallSession = { appointment_id: appointmentId, ...result.session };
+      sessionRef.current = nextSession;
       setSession(nextSession);
       await joinCall(nextSession);
     } catch (error) {
@@ -279,7 +282,11 @@ export default function CallCenter() {
   useEffect(() => {
     let stopped = false;
     const poll = async () => {
-      if (stopped || pollInFlightRef.current) return;
+      if (stopped) return;
+      if (pollInFlightRef.current) {
+        reconcileQueuedRef.current = true;
+        return;
+      }
       pollInFlightRef.current = true;
       try {
         const current = sessionRef.current;
@@ -304,7 +311,11 @@ export default function CallCenter() {
             await closeSession(text);
             return;
           }
-          if (status) setSession((previous) => previous ? { ...previous, call_status: status } : previous);
+          if (status) {
+            const updated = { ...current, call_status: status };
+            sessionRef.current = updated;
+            setSession(updated);
+          }
           return;
         }
 
@@ -320,6 +331,7 @@ export default function CallCenter() {
         if (next && !sessionRef.current && !busyRef.current) {
           busyRef.current = true;
           setNotice(null);
+          sessionRef.current = next;
           setSession(next);
           setPhase("idle");
         }
@@ -329,13 +341,175 @@ export default function CallCenter() {
         }
       } finally {
         pollInFlightRef.current = false;
+        if (reconcileQueuedRef.current && !stopped) {
+          reconcileQueuedRef.current = false;
+          void poll();
+        }
       }
     };
 
-    void poll();
-    const timer = window.setInterval(() => { if (!stopped) void poll(); }, session ? 2500 : 5000);
-    return () => { stopped = true; window.clearInterval(timer); };
-  }, [session?.id, closeSession]);
+    const supabase = createClient();
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let realtimeHealthy = false;
+    let hasSubscribed = false;
+    let fallbackTimer: number | undefined;
+    let connectionWatchdog: number | undefined;
+    let connect: (() => Promise<void>) | null = null;
+
+    const stopFallback = () => {
+      if (fallbackTimer !== undefined) {
+        window.clearTimeout(fallbackTimer);
+        fallbackTimer = undefined;
+      }
+    };
+    const scheduleFallback = () => {
+      if (stopped || realtimeHealthy || fallbackTimer !== undefined) return;
+      fallbackTimer = window.setTimeout(() => {
+        fallbackTimer = undefined;
+        void poll().finally(() => {
+          if (!channel && connect) void connect();
+          scheduleFallback();
+        });
+      }, sessionRef.current ? 5000 : 10000);
+    };
+    const startFallback = () => {
+      if (stopped || realtimeHealthy) return;
+      void poll();
+      scheduleFallback();
+    };
+
+    connect = async () => {
+      try {
+        const { data: { user }, error } = await supabase.auth.getUser();
+        if (stopped) return;
+        if (error) {
+          startFallback();
+          return;
+        }
+        if (!user) return;
+
+        channel = supabase
+          .channel("skinwise-call-sessions:" + user.id)
+          .on(
+            "postgres_changes",
+            { event: "*", schema: "public", table: "call_sessions" },
+            (payload) => {
+              if (stopped) return;
+              const row = payload.new as Record<string, unknown> | null;
+              if (!row) return;
+              if (row.caller_user_id !== user.id && row.recipient_user_id !== user.id) return;
+              const current = sessionRef.current;
+              const isCurrentSession = typeof row.id === "string" && row.id === current?.id;
+              const isIncomingInvitation =
+                row.recipient_user_id === user.id && row.call_status === "ringing";
+              if (isCurrentSession || isIncomingInvitation) void poll();
+            }
+          )
+          .subscribe((status) => {
+            if (stopped) return;
+            if (status === "SUBSCRIBED") {
+              realtimeHealthy = true;
+              hasSubscribed = true;
+              stopFallback();
+              if (connectionWatchdog !== undefined) {
+                window.clearTimeout(connectionWatchdog);
+                connectionWatchdog = undefined;
+              }
+              // Verify an authorized snapshot only after Realtime is ready.
+              void poll();
+              return;
+            }
+
+            realtimeHealthy = false;
+            if (
+              status === "CHANNEL_ERROR" ||
+              status === "TIMED_OUT" ||
+              status === "CLOSED" ||
+              hasSubscribed
+            ) {
+              startFallback();
+            }
+          });
+
+        connectionWatchdog = window.setTimeout(() => {
+          connectionWatchdog = undefined;
+          if (!stopped && !realtimeHealthy) startFallback();
+        }, 8000);
+      } catch {
+        if (!stopped) startFallback();
+      }
+    };
+
+    void connect();
+    return () => {
+      stopped = true;
+      realtimeHealthy = false;
+      reconcileQueuedRef.current = false;
+      stopFallback();
+      if (connectionWatchdog !== undefined) window.clearTimeout(connectionWatchdog);
+      if (channel) void supabase.removeChannel(channel);
+    };
+  }, [closeSession]);
+
+  useEffect(() => {
+    if (!session || session.call_status !== "ringing" || !session.expires_at) return;
+    const sessionId = session.id;
+    const expiresAt = new Date(session.expires_at).getTime();
+    if (!Number.isFinite(expiresAt)) return;
+
+    let stopped = false;
+    let retryTimer: number | undefined;
+    const verifyExpiry = async () => {
+      if (stopped || sessionRef.current?.id !== sessionId) return;
+      try {
+        const expireResponse = await fetch(
+          "/api/call-sessions/" + encodeURIComponent(sessionId) + "/expire",
+          { method: "POST", cache: "no-store" }
+        );
+        if (stopped || sessionRef.current?.id !== sessionId) return;
+
+        const response = await fetch(
+          "/api/call-sessions?session_id=" + encodeURIComponent(sessionId),
+          { cache: "no-store" }
+        );
+        if (stopped || sessionRef.current?.id !== sessionId) return;
+        if (response.status === 404 || response.status === 410) {
+          await closeSession("The appointment is no longer confirmed or this call is unavailable.");
+          return;
+        }
+        if (!response.ok) {
+          setNotice(await apiError(response));
+          retryTimer = window.setTimeout(() => void verifyExpiry(), 5000);
+          return;
+        }
+
+        const result = (await response.json()) as { session?: { call_status: CallStatus } };
+        const status = result.session?.call_status;
+        if (status === "missed") {
+          await closeSession("The invitation expired without an answer.");
+        } else if (status && status !== "ringing") {
+          const updated = { ...sessionRef.current!, call_status: status };
+          sessionRef.current = updated;
+          setSession(updated);
+        } else if (status === "ringing" && !expireResponse.ok) {
+          retryTimer = window.setTimeout(() => void verifyExpiry(), 1500);
+        }
+      } catch {
+        if (!stopped) {
+          setNotice("Could not verify whether the call invitation expired.");
+          retryTimer = window.setTimeout(() => void verifyExpiry(), 5000);
+        }
+      }
+    };
+
+    const delay = Math.max(0, expiresAt - Date.now()) + 250;
+    const timer = window.setTimeout(() => void verifyExpiry(), delay);
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
+  }, [session?.id, session?.call_status, session?.expires_at, closeSession]);
 
   async function acceptIncoming() {
     if (!session) return;

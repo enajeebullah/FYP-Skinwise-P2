@@ -46,6 +46,45 @@ type CallSessionReference = {
   room_expires_at: string | null;
 };
 
+type ExistingCallSession = {
+  id: string;
+  room_name: string;
+  call_mode: CallMode;
+  call_status: string;
+  expires_at: string;
+  room_expires_at: string | null;
+};
+
+function sanitizedDailyError(responseBody: unknown) {
+  if (typeof responseBody !== "object" || responseBody === null) {
+    return { response: "non-json response" };
+  }
+
+  const body = responseBody as Record<string, unknown>;
+  const safeFields: Record<string, unknown> = {};
+  for (const key of ["error", "info", "message", "status"]) {
+    const value = body[key];
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      safeFields[key] = typeof value === "string" ? value.slice(0, 300) : value;
+    }
+  }
+  return Object.keys(safeFields).length > 0 ? safeFields : { response: "no safe diagnostic fields" };
+}
+
+async function logDailyFailure(operation: string, response: Response) {
+  let sanitizedError: Record<string, unknown>;
+  try {
+    sanitizedError = sanitizedDailyError(await response.clone().json()) as Record<string, unknown>;
+  } catch {
+    sanitizedError = { response: "non-json response" };
+  }
+  console.error("Daily API request failed:", {
+    operation,
+    status: response.status,
+    error: sanitizedError,
+  });
+}
+
 function dailyRoomUrlBase(domain: string) {
   const host = domain
     .trim()
@@ -65,7 +104,7 @@ function isDailyRoom(value: unknown): value is DailyRoom {
   );
 }
 
-async function getDailyRoom(apiKey: string, roomName: string) {
+async function getDailyRoom(apiKey: string, roomName: string, operation = "retrieve room (GET /v1/rooms/{room_name})") {
   const response = await fetch(
     `https://api.daily.co/v1/rooms/${encodeURIComponent(roomName)}`,
     {
@@ -74,7 +113,10 @@ async function getDailyRoom(apiKey: string, roomName: string) {
     }
   );
 
-  if (!response.ok) return null;
+  if (!response.ok) {
+    await logDailyFailure(operation, response);
+    return null;
+  }
 
   const payload: unknown = await response.json();
   return isDailyRoom(payload) ? payload : null;
@@ -186,16 +228,68 @@ export async function POST(request: Request) {
     return NextResponse.json({ detail: "Call session service is not configured." }, { status: 503 });
   }
 
-  const { data: existingSession, error: existingSessionError } = await supabase
+  const { data: initialExistingSession, error: existingSessionError } = await supabase
     .from("call_sessions")
     .select("id, room_name, call_mode, call_status, expires_at, room_expires_at")
     .eq("appointment_id", appointment.id)
     .in("call_status", [...LIVE_CALL_STATUSES])
-    .maybeSingle();
+    .maybeSingle<ExistingCallSession>();
 
   if (existingSessionError) {
     console.error("Could not check for an existing call session:", existingSessionError);
     return NextResponse.json({ detail: "Could not check the call session." }, { status: 500 });
+  }
+
+  const serviceSupabase = createServiceClient();
+  const resolveExpiredSession = async (candidate: ExistingCallSession) => {
+    const expiresAt = candidate.call_status === "ringing"
+      ? candidate.expires_at
+      : candidate.room_expires_at;
+    if (expiresAt && new Date(expiresAt).getTime() > Date.now()) {
+      return { session: candidate, error: null };
+    }
+
+    const { error: transitionError } = await serviceSupabase.rpc("transition_call_session", {
+      p_session_id: candidate.id,
+      p_actor_user_id: user.id,
+      p_target_status: candidate.call_status === "ringing" ? "missed" : "ended",
+    });
+
+    // Re-read after the transition (or a concurrent transition) before any
+    // attempt to create another row for this appointment.
+    const { data: recheckedSession, error: recheckError } = await supabase
+      .from("call_sessions")
+      .select("id, room_name, call_mode, call_status, expires_at, room_expires_at")
+      .eq("appointment_id", appointment.id)
+      .in("call_status", [...LIVE_CALL_STATUSES])
+      .maybeSingle<ExistingCallSession>();
+
+    if (recheckError) {
+      console.error("Could not recheck the call session after expiry resolution:", recheckError);
+      return { session: null, error: "Could not recheck the call session." };
+    }
+
+    if (transitionError && recheckedSession?.id === candidate.id) {
+      // Preserve a session that may have been accepted concurrently; the
+      // existing-session path below will only reuse it if it remains valid.
+      console.error("Call-session expiry transition did not complete:", transitionError);
+    }
+
+    return { session: recheckedSession, error: null };
+  };
+
+  let existingSession = initialExistingSession;
+  if (existingSession) {
+    const expiry = existingSession.call_status === "ringing"
+      ? existingSession.expires_at
+      : existingSession.room_expires_at;
+    if (!expiry || new Date(expiry).getTime() <= Date.now()) {
+      const resolution = await resolveExpiredSession(existingSession);
+      if (resolution.error) {
+        return NextResponse.json({ detail: resolution.error }, { status: 500 });
+      }
+      existingSession = resolution.session;
+    }
   }
 
   const dailyApiKey = process.env.DAILY_API_KEY;
@@ -283,7 +377,7 @@ export async function POST(request: Request) {
     }
 
     if (!dailyResponse.ok) {
-      console.error("Daily room creation failed with status:", dailyResponse.status);
+      await logDailyFailure("create room (POST /v1/rooms)", dailyResponse);
       return NextResponse.json({ detail: "Could not create the Daily room." }, { status: 502 });
     }
 
@@ -301,7 +395,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ detail: "Daily returned an unexpected room." }, { status: 502 });
     }
 
-    const serviceSupabase = createServiceClient();
     const { data: session, error: insertError } = await serviceSupabase
       .from("call_sessions")
       .insert({
@@ -328,11 +421,25 @@ export async function POST(request: Request) {
           .in("call_status", [...LIVE_CALL_STATUSES])
           .maybeSingle();
 
-        if (racedSession) {
+        let reusableRacedSession = racedSession as ExistingCallSession | null;
+        if (reusableRacedSession) {
+          const racedExpiry = reusableRacedSession.call_status === "ringing"
+            ? reusableRacedSession.expires_at
+            : reusableRacedSession.room_expires_at;
+          if (!racedExpiry || new Date(racedExpiry).getTime() <= Date.now()) {
+            const resolution = await resolveExpiredSession(reusableRacedSession);
+            if (resolution.error) {
+              return NextResponse.json({ detail: resolution.error }, { status: 500 });
+            }
+            reusableRacedSession = resolution.session;
+          }
+        }
+
+        if (reusableRacedSession) {
           const racedSessionExpiry =
-            racedSession.call_status === "ringing"
-              ? racedSession.expires_at
-              : racedSession.room_expires_at;
+            reusableRacedSession.call_status === "ringing"
+              ? reusableRacedSession.expires_at
+              : reusableRacedSession.room_expires_at;
           if (!racedSessionExpiry || new Date(racedSessionExpiry).getTime() <= Date.now()) {
             return NextResponse.json(
               { detail: "An existing call session requires lifecycle resolution before retrying." },
@@ -340,12 +447,16 @@ export async function POST(request: Request) {
             );
           }
 
-          const racedRoom = await getDailyRoom(dailyApiKey, racedSession.room_name);
+          const racedRoom = await getDailyRoom(
+            dailyApiKey,
+            reusableRacedSession.room_name,
+            "retrieve raced room (GET /v1/rooms/{room_name})"
+          );
           if (
             !racedRoom ||
             !isSuitableDailyRoom(
               racedRoom,
-              racedSession.room_name,
+              reusableRacedSession.room_name,
               dailyHost,
               Math.floor(Date.now() / 1000)
             )
@@ -358,7 +469,7 @@ export async function POST(request: Request) {
 
           return NextResponse.json(
             {
-              session: publicSession(racedSession),
+              session: publicSession(reusableRacedSession),
               room_url: racedRoom.url,
             },
             { status: 200 }

@@ -21,6 +21,36 @@ type DailyRoom = {
   config?: { exp?: unknown };
 };
 
+function sanitizedDailyError(responseBody: unknown) {
+  if (typeof responseBody !== "object" || responseBody === null) {
+    return { response: "non-json response" };
+  }
+
+  const body = responseBody as Record<string, unknown>;
+  const safeFields: Record<string, unknown> = {};
+  for (const key of ["error", "info", "message", "status"]) {
+    const value = body[key];
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      safeFields[key] = typeof value === "string" ? value.slice(0, 300) : value;
+    }
+  }
+  return Object.keys(safeFields).length > 0 ? safeFields : { response: "no safe diagnostic fields" };
+}
+
+async function logDailyFailure(operation: string, response: Response) {
+  let sanitizedError: Record<string, unknown>;
+  try {
+    sanitizedError = sanitizedDailyError(await response.clone().json()) as Record<string, unknown>;
+  } catch {
+    sanitizedError = { response: "non-json response" };
+  }
+  console.error("Daily API request failed:", {
+    operation,
+    status: response.status,
+    error: sanitizedError,
+  });
+}
+
 function dailyRoomHost(domain: string) {
   const host = domain.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
   return host.endsWith(".daily.co") ? host : `${host}.daily.co`;
@@ -109,6 +139,7 @@ export async function POST(
       }
     );
     if (!roomResponse.ok) {
+      await logDailyFailure("retrieve room (GET /v1/rooms/{room_name})", roomResponse);
       return NextResponse.json({ detail: "The Daily room is unavailable." }, { status: 409 });
     }
 
@@ -183,7 +214,7 @@ export async function POST(
     });
 
     if (!tokenResponse.ok) {
-      console.error("Daily meeting-token creation failed with status:", tokenResponse.status);
+      await logDailyFailure("create meeting token (POST /v1/meeting-tokens)", tokenResponse);
       return NextResponse.json({ detail: "Could not authorize Daily joining." }, { status: 502 });
     }
 
