@@ -7,6 +7,12 @@ import {
   getAuthorizedAppointment,
   isUuid,
 } from "@/lib/call-sessions/authorization";
+import {
+  createLiveKitRoomService,
+  getLiveKitConfiguration,
+  isLiveKitRoomName,
+  LIVEKIT_ROOM_PREFIX,
+} from "@/lib/call-sessions/livekit";
 
 export const dynamic = "force-dynamic";
 
@@ -292,18 +298,6 @@ export async function POST(request: Request) {
     }
   }
 
-  const dailyApiKey = process.env.DAILY_API_KEY;
-  const dailyDomain = process.env.DAILY_DOMAIN?.trim();
-  if (!dailyApiKey || !dailyDomain) {
-    return NextResponse.json(
-      { detail: "Daily room creation is not configured on the server." },
-      { status: 503 }
-    );
-  }
-
-  const dailyBaseUrl = dailyRoomUrlBase(dailyDomain);
-  const dailyHost = new URL(dailyBaseUrl).hostname;
-
   if (existingSession) {
     const sessionExpiry =
       existingSession.call_status === "ringing"
@@ -316,6 +310,28 @@ export async function POST(request: Request) {
       );
     }
 
+    if (isLiveKitRoomName(existingSession.room_name)) {
+      if (!getLiveKitConfiguration()) {
+        return NextResponse.json({ detail: "LiveKit room service is not configured on the server." }, { status: 503 });
+      }
+      try {
+        const [livekitRoom] = await createLiveKitRoomService().listRooms([existingSession.room_name]);
+        if (!livekitRoom || livekitRoom.name !== existingSession.room_name || livekitRoom.maxParticipants !== 2) {
+          return NextResponse.json({ detail: "The existing call room is unavailable or unsuitable." }, { status: 409 });
+        }
+        return NextResponse.json({ session: publicSession(existingSession), provider: "livekit" }, { status: 200 });
+      } catch (error) {
+        console.error("LiveKit room retrieval failed:", error instanceof Error ? error.message : "unknown error");
+        return NextResponse.json({ detail: "The existing call room is unavailable or unsuitable." }, { status: 409 });
+      }
+    }
+
+    const dailyApiKey = process.env.DAILY_API_KEY;
+    const dailyDomain = process.env.DAILY_DOMAIN?.trim();
+    if (!dailyApiKey || !dailyDomain) {
+      return NextResponse.json({ detail: "Daily room creation is not configured on the server." }, { status: 503 });
+    }
+    const dailyHost = new URL(dailyRoomUrlBase(dailyDomain)).hostname;
     const existingDailyRoom = await getDailyRoom(dailyApiKey, existingSession.room_name);
     if (
       !existingDailyRoom ||
@@ -336,20 +352,53 @@ export async function POST(request: Request) {
       {
         session: publicSession(existingSession),
         room_url: existingDailyRoom.url,
+        provider: "daily",
       },
       { status: 200 }
     );
   }
 
+  const provider = process.env.CALL_MEDIA_PROVIDER === "daily" ? "daily" : "livekit";
+  if (provider === "livekit" && !getLiveKitConfiguration()) {
+    return NextResponse.json({ detail: "LiveKit room service is not configured on the server." }, { status: 503 });
+  }
+  const dailyApiKey = process.env.DAILY_API_KEY;
+  const dailyDomain = process.env.DAILY_DOMAIN?.trim();
+  if (provider === "daily" && (!dailyApiKey || !dailyDomain)) {
+    return NextResponse.json({ detail: "Daily room creation is not configured on the server." }, { status: 503 });
+  }
+  const dailyHost = dailyDomain ? new URL(dailyRoomUrlBase(dailyDomain)).hostname : "";
+
   const recipientUserId =
     user.id === appointment.patient_id ? appointment.doctor.user_id : appointment.patient_id;
-  // A new database session gets a fresh private room, so an ended call's
-  // still-live Daily room can never be adopted by a later invitation.
-  const roomName = `skinwise-${appointment.id}-${crypto.randomUUID()}`;
+  // Provider prefix lets rollback keep serving already-created rooms correctly.
+  const roomName = provider === "livekit"
+    ? `${LIVEKIT_ROOM_PREFIX}${appointment.id}-${crypto.randomUUID()}`
+    : `skinwise-${appointment.id}-${crypto.randomUUID()}`;
   const invitationExpiresAt = new Date(Date.now() + INVITATION_TTL_MS);
   const roomExpiresAt = new Date(Date.now() + ROOM_TTL_MS);
+  let unclaimedLiveKitRoomName: string | null = null;
+  let liveKitRoomService: ReturnType<typeof createLiveKitRoomService> | null = null;
 
   try {
+    let mediaRoomName = roomName;
+    let dailyRoomUrl: string | null = null;
+    if (provider === "livekit") {
+      const livekitRooms = createLiveKitRoomService();
+      liveKitRoomService = livekitRooms;
+      const room = await livekitRooms.createRoom({
+        name: roomName,
+        emptyTimeout: Math.floor(ROOM_TTL_MS / 1000),
+        departureTimeout: 60,
+        maxParticipants: 2,
+      });
+      unclaimedLiveKitRoomName = roomName;
+      const [verifiedRoom] = await livekitRooms.listRooms([roomName]);
+      if (room.name !== roomName || !verifiedRoom || verifiedRoom.name !== roomName || verifiedRoom.maxParticipants !== 2) {
+        console.error("LiveKit room creation returned an unexpected room.");
+        return NextResponse.json({ detail: "LiveKit returned an unexpected room." }, { status: 502 });
+      }
+    } else {
     const dailyResponse = await fetch("https://api.daily.co/v1/rooms", {
       method: "POST",
       headers: {
@@ -381,7 +430,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ detail: "Could not create the Daily room." }, { status: 502 });
     }
 
-    const dailyRoom = await getDailyRoom(dailyApiKey, roomName);
+    const dailyRoom = await getDailyRoom(dailyApiKey!, roomName);
     if (
       !dailyRoom ||
       !isSuitableDailyRoom(
@@ -394,6 +443,9 @@ export async function POST(request: Request) {
       console.error("Daily room was missing or did not match the required configuration.");
       return NextResponse.json({ detail: "Daily returned an unexpected room." }, { status: 502 });
     }
+    mediaRoomName = dailyRoom.name;
+    dailyRoomUrl = dailyRoom.url;
+    }
 
     const { data: session, error: insertError } = await serviceSupabase
       .from("call_sessions")
@@ -401,7 +453,7 @@ export async function POST(request: Request) {
         appointment_id: appointment.id,
         caller_user_id: user.id,
         recipient_user_id: recipientUserId,
-        room_name: dailyRoom.name,
+        room_name: mediaRoomName,
         call_mode: callMode,
         call_status: "ringing",
         // expires_at is the unanswered-invitation deadline; room_expires_at
@@ -447,6 +499,22 @@ export async function POST(request: Request) {
             );
           }
 
+          if (isLiveKitRoomName(reusableRacedSession.room_name)) {
+            try {
+              const [racedLiveKitRoom] = await createLiveKitRoomService().listRooms([reusableRacedSession.room_name]);
+              if (!racedLiveKitRoom || racedLiveKitRoom.name !== reusableRacedSession.room_name || racedLiveKitRoom.maxParticipants !== 2) {
+                return NextResponse.json({ detail: "The existing call room is unavailable or unsuitable." }, { status: 409 });
+              }
+              return NextResponse.json({ session: publicSession(reusableRacedSession), provider: "livekit" }, { status: 200 });
+            } catch (error) {
+              console.error("LiveKit raced-room retrieval failed:", error instanceof Error ? error.message : "unknown error");
+              return NextResponse.json({ detail: "The existing call room is unavailable or unsuitable." }, { status: 409 });
+            }
+          }
+
+          if (!dailyApiKey || !dailyDomain) {
+            return NextResponse.json({ detail: "Daily room retrieval is not configured on the server." }, { status: 503 });
+          }
           const racedRoom = await getDailyRoom(
             dailyApiKey,
             reusableRacedSession.room_name,
@@ -471,6 +539,7 @@ export async function POST(request: Request) {
             {
               session: publicSession(reusableRacedSession),
               room_url: racedRoom.url,
+              provider: "daily",
             },
             { status: 200 }
           );
@@ -486,16 +555,45 @@ export async function POST(request: Request) {
       return NextResponse.json({ detail: "Could not create the call session." }, { status: 500 });
     }
 
+    // The unique room is now referenced by a persisted call session and must
+    // remain available to both participants.
+    unclaimedLiveKitRoomName = null;
     return NextResponse.json(
-      { session: publicSession(session), room_url: dailyRoom.url },
+      { session: publicSession(session), ...(dailyRoomUrl ? { room_url: dailyRoomUrl } : {}), provider },
       { status: 201 }
     );
   } catch (error) {
-    console.error("Call session or Daily room creation failed:", error);
+    console.error("Call session or media room creation failed:", error);
     return NextResponse.json(
       { detail: "Could not create the call session." },
       { status: 502 }
     );
+  } finally {
+    if (unclaimedLiveKitRoomName && liveKitRoomService) {
+      try {
+        const { data: persistedSession, error: persistedSessionError } = await serviceSupabase
+          .from("call_sessions")
+          .select("id")
+          .eq("room_name", unclaimedLiveKitRoomName)
+          .maybeSingle<{ id: string }>();
+        if (persistedSessionError) {
+          console.error("Could not verify whether the LiveKit room is referenced by a call session.");
+        } else if (!persistedSession) {
+          const [room] = await liveKitRoomService.listRooms([unclaimedLiveKitRoomName]);
+          if (room?.name === unclaimedLiveKitRoomName) {
+            const participants = await liveKitRoomService.listParticipants(unclaimedLiveKitRoomName);
+            if (participants.length === 0) {
+              await liveKitRoomService.deleteRoom(unclaimedLiveKitRoomName);
+            }
+          }
+        }
+      } catch (cleanupError) {
+        console.error(
+          "Could not clean up an unclaimed LiveKit room:",
+          cleanupError instanceof Error ? cleanupError.message : "unknown error"
+        );
+      }
+    }
   }
 }
 

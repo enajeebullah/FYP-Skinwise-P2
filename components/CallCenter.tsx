@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { DailyCall, DailyEventObject } from "@daily-co/daily-js";
+import { Room, RoomEvent, Track } from "livekit-client";
 import { createClient } from "@/lib/supabase/client";
 
 type CallStatus = "ringing" | "accepted" | "active" | "rejected" | "missed" | "ended" | "failed";
@@ -17,7 +18,8 @@ type CallSession = {
   caller_name?: string;
 };
 
-type DailyCredentials = { roomUrl: string; token: string; sessionId: string; callMode: CallMode };
+type CallCredentials = { roomUrl: string; token: string; sessionId: string; callMode: CallMode; provider: "daily" | "livekit" };
+type MediaControls = { toggleMicrophone: () => Promise<boolean>; toggleCamera: () => Promise<boolean> };
 
 type ApiError = { detail?: string };
 
@@ -85,9 +87,168 @@ export function AppointmentCallButton({
   );
 }
 
+const LiveKitCallSurface = forwardRef<MediaControls, {
+  credentials: CallCredentials;
+  onConnected: () => void;
+  onReconnecting: () => void;
+  onDisconnected: () => void;
+  onParticipantConnected: () => void;
+  onParticipantDisconnected: () => void;
+  onError: (message: string) => void;
+}>(({ credentials, onConnected, onReconnecting, onDisconnected, onParticipantConnected, onParticipantDisconnected, onError }, ref) => {
+  const mediaRef = useRef<HTMLDivElement>(null);
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const roomRef = useRef<Room | null>(null);
+  const callbacksRef = useRef({
+    onConnected,
+    onReconnecting,
+    onDisconnected,
+    onParticipantConnected,
+    onParticipantDisconnected,
+    onError,
+  });
+  callbacksRef.current = {
+    onConnected,
+    onReconnecting,
+    onDisconnected,
+    onParticipantConnected,
+    onParticipantDisconnected,
+    onError,
+  };
+  const [muted, setMuted] = useState(false);
+  const [cameraOff, setCameraOff] = useState(credentials.callMode === "audio");
+
+  useImperativeHandle(ref, () => ({
+    toggleMicrophone: async () => {
+      const room = roomRef.current;
+      if (!room) return false;
+      const enabled = !room.localParticipant.isMicrophoneEnabled;
+      await room.localParticipant.setMicrophoneEnabled(enabled);
+      setMuted(!enabled);
+      return !enabled;
+    },
+    toggleCamera: async () => {
+      const room = roomRef.current;
+      if (!room) return false;
+      const enabled = !room.localParticipant.isCameraEnabled;
+      await room.localParticipant.setCameraEnabled(enabled);
+      setCameraOff(!enabled);
+      return !enabled;
+    },
+  }), []);
+
+  useEffect(() => {
+    let disposed = false;
+    const room = new Room({ adaptiveStream: true, dynacast: true });
+    roomRef.current = room;
+    const attachRemoteTrack = (track: Track) => {
+      const element = track.attach();
+      if (track.kind === Track.Kind.Audio) {
+        element.className = "sr-only";
+      } else {
+        element.className = "h-full w-full rounded-xl object-cover";
+      }
+      mediaRef.current?.appendChild(element);
+    };
+    const detachRemoteTrack = (track: Track) => track.detach().forEach((element) => element.remove());
+    const onTrackSubscribed = (track: Track) => attachRemoteTrack(track);
+    const onTrackUnsubscribed = (track: Track) => detachRemoteTrack(track);
+    let mediaReady = false;
+    let transportConnected = false;
+    const onRoomConnected = () => {
+      transportConnected = true;
+      if (mediaReady) callbacksRef.current.onConnected();
+    };
+    const onRemoteParticipantDisconnected = () => callbacksRef.current.onParticipantDisconnected();
+    const onRemoteParticipantConnected = () => callbacksRef.current.onParticipantConnected();
+    const onRoomReconnecting = () => {
+      transportConnected = false;
+      callbacksRef.current.onReconnecting();
+    };
+    const onRoomReconnected = () => {
+      transportConnected = true;
+      if (mediaReady) callbacksRef.current.onConnected();
+    };
+    const onRoomDisconnected = () => {
+      transportConnected = false;
+      if (!disposed) callbacksRef.current.onDisconnected();
+    };
+    room.on(RoomEvent.Connected, onRoomConnected);
+    room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
+    room.on(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
+    room.on(RoomEvent.ParticipantDisconnected, onRemoteParticipantDisconnected);
+    room.on(RoomEvent.ParticipantConnected, onRemoteParticipantConnected);
+    room.on(RoomEvent.Reconnecting, onRoomReconnecting);
+    room.on(RoomEvent.Reconnected, onRoomReconnected);
+    room.on(RoomEvent.Disconnected, onRoomDisconnected);
+
+    const connect = async () => {
+      try {
+        await room.connect(credentials.roomUrl, credentials.token);
+        if (credentials.callMode === "audio") {
+          await room.localParticipant.setMicrophoneEnabled(true);
+        } else {
+          await room.localParticipant.enableCameraAndMicrophone();
+        }
+        if (disposed) return;
+        const cameraTrack = room.localParticipant.getTrackPublication(Track.Source.Camera)?.track;
+        if (cameraTrack && localVideoRef.current) cameraTrack.attach(localVideoRef.current);
+        for (const participant of room.remoteParticipants.values()) {
+          for (const publication of participant.trackPublications.values()) {
+            if (publication.track && publication.track.kind !== Track.Kind.Unknown) {
+              attachRemoteTrack(publication.track as Track);
+            }
+          }
+        }
+        mediaReady = true;
+        if (transportConnected && room.state === "connected") callbacksRef.current.onConnected();
+      } catch (error) {
+        if (disposed) return;
+        const denied = error instanceof DOMException && error.name === "NotAllowedError";
+        callbacksRef.current.onError(denied
+          ? "Camera or microphone permission was denied. Allow access in your browser settings, then retry."
+          : error instanceof Error ? error.message : "Could not connect to LiveKit.");
+      }
+    };
+    void connect();
+    return () => {
+      disposed = true;
+      room.off(RoomEvent.Connected, onRoomConnected);
+      room.off(RoomEvent.TrackSubscribed, onTrackSubscribed);
+      room.off(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
+      room.off(RoomEvent.ParticipantDisconnected, onRemoteParticipantDisconnected);
+      room.off(RoomEvent.ParticipantConnected, onRemoteParticipantConnected);
+      room.off(RoomEvent.Reconnecting, onRoomReconnecting);
+      room.off(RoomEvent.Reconnected, onRoomReconnected);
+      room.off(RoomEvent.Disconnected, onRoomDisconnected);
+      for (const participant of room.remoteParticipants.values()) {
+        for (const publication of participant.trackPublications.values()) {
+          publication.track?.detach().forEach((element) => element.remove());
+        }
+      }
+      if (localVideoRef.current) {
+        room.localParticipant.getTrackPublication(Track.Source.Camera)?.track?.detach(localVideoRef.current);
+      }
+      roomRef.current = null;
+      void room.disconnect();
+    };
+  }, [credentials]);
+
+  return (
+    <div className="relative min-h-64 bg-[#101A28] p-3 sm:min-h-[min(62vh,620px)]">
+      <div ref={mediaRef} className="grid h-full min-h-64 grid-cols-1 gap-3 sm:grid-cols-2" />
+      {credentials.callMode === "video" && (
+        <video ref={localVideoRef} autoPlay playsInline muted className="absolute bottom-5 right-5 z-10 h-24 w-36 rounded-xl bg-[#243449] object-cover shadow-lg sm:h-32 sm:w-48" />
+      )}
+      <span className="sr-only">Microphone {muted ? "muted" : "on"}; camera {cameraOff ? "off" : "on"}</span>
+    </div>
+  );
+});
+LiveKitCallSurface.displayName = "LiveKitCallSurface";
+
 export default function CallCenter() {
   const [session, setSession] = useState<CallSession | null>(null);
-  const [credentials, setCredentials] = useState<DailyCredentials | null>(null);
+  const [credentials, setCredentials] = useState<CallCredentials | null>(null);
   const [phase, setPhase] = useState<"idle" | "working" | "joining" | "joined" | "ending" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -96,6 +257,8 @@ export default function CallCenter() {
   const [otherDisconnected, setOtherDisconnected] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const callRef = useRef<DailyCall | null>(null);
+  const liveKitControlsRef = useRef<MediaControls | null>(null);
+  const activeStatusRequestsRef = useRef(new Set<string>());
   const callCleanupRef = useRef<(() => Promise<void>) | null>(null);
   const sessionRef = useRef<CallSession | null>(null);
   const busyRef = useRef(false);
@@ -105,6 +268,17 @@ export default function CallCenter() {
   useEffect(() => {
     sessionRef.current = session;
   }, [session]);
+
+  async function markCallActive(sessionId: string) {
+    if (activeStatusRequestsRef.current.has(sessionId)) return;
+    activeStatusRequestsRef.current.add(sessionId);
+    try {
+      const response = await fetch(`/api/call-sessions/${encodeURIComponent(sessionId)}/active`, { method: "POST" });
+      if (!response.ok) setMessage(await apiError(response));
+    } catch {
+      setMessage("Could not update the call status.");
+    }
+  }
 
   const closeSession = useCallback(async (text: string) => {
     const cleanupCall = callCleanupRef.current;
@@ -131,13 +305,14 @@ export default function CallCenter() {
         cache: "no-store",
       });
       if (!response.ok) throw new Error(await apiError(response));
-      const result = (await response.json()) as { token?: string; room_url?: string };
+      const result = (await response.json()) as { token?: string; room_url?: string; provider?: "daily" | "livekit" };
       if (!result.token || !result.room_url) throw new Error("The call token response was incomplete.");
       setCredentials({
         roomUrl: result.room_url,
         token: result.token,
         sessionId: target.id,
         callMode: target.call_mode,
+        provider: result.provider === "daily" ? "daily" : "livekit",
       });
       setPhase("joining");
     } catch (error) {
@@ -198,7 +373,7 @@ export default function CallCenter() {
     let disposed = false;
     let call: DailyCall | null = null;
 
-    if (!credentials || !containerRef.current) return;
+    if (!credentials || credentials.provider !== "daily" || !containerRef.current) return;
 
     const createAndJoin = async () => {
       try {
@@ -216,11 +391,7 @@ export default function CallCenter() {
           setPhase("joined");
           setMuted(false);
           setCameraOff(credentials.callMode === "audio");
-          void fetch(`/api/call-sessions/${encodeURIComponent(credentials.sessionId)}/active`, { method: "POST" })
-            .then(async (response) => {
-              if (!response.ok) setMessage(await apiError(response));
-            })
-            .catch(() => setMessage("Could not update the call status."));
+          void markCallActive(credentials.sessionId);
         };
         const onParticipantLeft = (event: DailyEventObject<"participant-left">) => {
           if (!event.participant.local) setOtherDisconnected(true);
@@ -556,6 +727,10 @@ export default function CallCenter() {
   }
 
   function toggleMicrophone() {
+    if (credentials?.provider === "livekit") {
+      void liveKitControlsRef.current?.toggleMicrophone().then(setMuted).catch((error) => setMessage(error instanceof Error ? error.message : "Could not change the microphone."));
+      return;
+    }
     const call = callRef.current;
     if (!call) return;
     const nextMuted = call.localAudio();
@@ -564,6 +739,10 @@ export default function CallCenter() {
   }
 
   function toggleCamera() {
+    if (credentials?.provider === "livekit") {
+      void liveKitControlsRef.current?.toggleCamera().then(setCameraOff).catch((error) => setMessage(error instanceof Error ? error.message : "Could not change the camera."));
+      return;
+    }
     const call = callRef.current;
     if (!call) return;
     const nextCameraOff = call.localVideo();
@@ -604,7 +783,31 @@ export default function CallCenter() {
                 <p className="text-xs text-[#64748B]">{phase === "joined" ? otherDisconnected ? "The other participant disconnected." : "Connected" : phase === "joining" || phase === "working" ? "Connecting securely…" : session.call_status === "ringing" ? "Waiting for the other participant to accept…" : "Call session"}</p>
               </div>
             </header>
-            <div ref={containerRef} className="min-h-48 bg-[#101A28]" />
+            {credentials?.provider === "livekit" ? (
+              <LiveKitCallSurface
+                ref={liveKitControlsRef}
+                credentials={credentials}
+                onConnected={() => {
+                  setPhase("joined");
+                  setMessage(null);
+                  setOtherDisconnected(false);
+                  setMuted(false);
+                  setCameraOff(credentials.callMode === "audio");
+                  void markCallActive(credentials.sessionId);
+                }}
+                onReconnecting={() => {
+                  setPhase("joining");
+                  setMessage("Connection interrupted. Reconnecting securely…");
+                }}
+                onDisconnected={() => {
+                  setPhase("error");
+                  setMessage("The LiveKit connection ended. Retry joining or end the call.");
+                }}
+                onParticipantDisconnected={() => setOtherDisconnected(true)}
+                onParticipantConnected={() => setOtherDisconnected(false)}
+                onError={(text) => { setPhase("error"); setMessage(text); }}
+              />
+            ) : <div ref={containerRef} className="min-h-48 bg-[#101A28]" />}
             {message && <p role="alert" className="mx-4 mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800 sm:mx-6">{message}</p>}
             {phase === "error" && (
               <div className="flex justify-end px-4 pt-3 sm:px-6">
@@ -612,8 +815,8 @@ export default function CallCenter() {
               </div>
             )}
             <footer className="flex flex-wrap items-center justify-center gap-3 border-t border-[#DCE5EF] bg-white px-4 py-3">
-              <button type="button" disabled={!callRef.current || phase !== "joined"} onClick={toggleMicrophone} className="min-h-10 rounded-lg border border-[#DCE5EF] px-4 py-2 text-sm font-semibold text-[#243449] disabled:opacity-50">{muted ? "Unmute microphone" : "Mute microphone"}</button>
-              <button type="button" disabled={!callRef.current || phase !== "joined"} onClick={toggleCamera} className="min-h-10 rounded-lg border border-[#DCE5EF] px-4 py-2 text-sm font-semibold text-[#243449] disabled:opacity-50">{cameraOff ? "Turn camera on" : "Turn camera off"}</button>
+              <button type="button" disabled={phase !== "joined" || (credentials?.provider === "livekit" ? !liveKitControlsRef.current : !callRef.current)} onClick={toggleMicrophone} className="min-h-10 rounded-lg border border-[#DCE5EF] px-4 py-2 text-sm font-semibold text-[#243449] disabled:opacity-50">{muted ? "Unmute microphone" : "Mute microphone"}</button>
+              <button type="button" disabled={phase !== "joined" || (credentials?.provider === "livekit" ? !liveKitControlsRef.current : !callRef.current)} onClick={toggleCamera} className="min-h-10 rounded-lg border border-[#DCE5EF] px-4 py-2 text-sm font-semibold text-[#243449] disabled:opacity-50">{cameraOff ? "Turn camera on" : "Turn camera off"}</button>
               <button type="button" onClick={() => void endCall()} disabled={phase === "ending" || phase === "working"} className="min-h-11 rounded-lg bg-[#A5404A] px-6 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-[#8F3540] focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60" aria-label="End video call">{phase === "ending" ? "Ending call…" : "End Call"}</button>
             </footer>
           </section>

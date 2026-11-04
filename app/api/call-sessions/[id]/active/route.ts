@@ -6,6 +6,11 @@ import {
   getAuthorizedAppointment,
   isUuid,
 } from "@/lib/call-sessions/authorization";
+import {
+  createLiveKitRoomService,
+  getLiveKitConfiguration,
+  isLiveKitRoomName,
+} from "@/lib/call-sessions/livekit";
 
 export const dynamic = "force-dynamic";
 
@@ -21,9 +26,9 @@ export async function POST(
 
   const { data: session, error: lookupError } = await authenticated.supabase
     .from("call_sessions")
-    .select("appointment_id")
+    .select("appointment_id, room_name")
     .eq("id", params.id)
-    .maybeSingle<{ appointment_id: string }>();
+    .maybeSingle<{ appointment_id: string; room_name: string }>();
 
   if (lookupError) {
     return NextResponse.json({ detail: "Could not load this call." }, { status: 500 });
@@ -38,6 +43,24 @@ export async function POST(
   }
   if (authorization.error !== null) {
     return NextResponse.json({ detail: "This call is no longer available." }, { status: 403 });
+  }
+
+  if (isLiveKitRoomName(session.room_name)) {
+    if (!getLiveKitConfiguration()) {
+      return NextResponse.json({ detail: "LiveKit connection verification is not configured." }, { status: 503 });
+    }
+    try {
+      const participants = await createLiveKitRoomService().listParticipants(session.room_name);
+      const authenticatedParticipantIsConnected = participants.some(
+        (participant) => participant.identity === authenticated.user.id
+      );
+      if (!authenticatedParticipantIsConnected) {
+        return NextResponse.json({ detail: "Join the LiveKit room before marking this call active." }, { status: 409 });
+      }
+    } catch {
+      console.error("Could not verify the LiveKit participant for active call status.");
+      return NextResponse.json({ detail: "Could not verify the LiveKit connection." }, { status: 503 });
+    }
   }
 
   if (!hasServiceConfiguration()) return NextResponse.json({ detail: "Call session service is not configured." }, { status: 503 });

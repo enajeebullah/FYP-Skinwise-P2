@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 
 import { createServiceClient, hasServiceConfiguration } from "@/lib/supabase/service";
 import { getAuthenticatedSession, isUuid } from "@/lib/call-sessions/authorization";
+import { AccessToken } from "livekit-server-sdk";
+import { createLiveKitRoomService, getLiveKitConfiguration, isLiveKitRoomName } from "@/lib/call-sessions/livekit";
 
 export const dynamic = "force-dynamic";
 
@@ -92,14 +94,6 @@ export async function POST(
   }
   if (!isUuid(params.id)) return NextResponse.json({ detail: "A valid call session ID is required." }, { status: 400 });
 
-  const dailyApiKey = process.env.DAILY_API_KEY;
-  const dailyDomain = process.env.DAILY_DOMAIN?.trim();
-  if (!dailyApiKey || !dailyDomain) {
-    return NextResponse.json(
-      { detail: "Daily joining is not configured on the server." },
-      { status: 503 }
-    );
-  }
   if (!hasServiceConfiguration()) {
     return NextResponse.json({ detail: "Call authorization is not configured on the server." }, { status: 503 });
   }
@@ -129,6 +123,78 @@ export async function POST(
     if (!claim) {
       console.error("Call token claim returned an invalid result.");
       return NextResponse.json({ detail: "Could not authorize joining this call." }, { status: 500 });
+    }
+
+    if (isLiveKitRoomName(claim.room_name)) {
+      const livekit = getLiveKitConfiguration();
+      if (!livekit) {
+        return NextResponse.json({ detail: "LiveKit joining is not configured on the server." }, { status: 503 });
+      }
+
+      const [room] = await createLiveKitRoomService().listRooms([claim.room_name]);
+      if (!room || room.name !== claim.room_name || room.maxParticipants !== 2) {
+        return NextResponse.json({ detail: "The LiveKit room is unavailable or unsuitable." }, { status: 409 });
+      }
+
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const roomExpirySeconds = Math.floor(new Date(claim.room_expires_at).getTime() / 1000);
+      const claimExpirySeconds = Math.floor(new Date(claim.claim_expires_at).getTime() / 1000);
+      const invitationExpirySeconds = Math.floor(new Date(claim.invitation_expires_at).getTime() / 1000);
+      if (
+        roomExpirySeconds <= nowSeconds ||
+        claimExpirySeconds <= nowSeconds ||
+        (claim.call_status === "ringing" && invitationExpirySeconds <= nowSeconds)
+      ) {
+        return NextResponse.json({ detail: "The LiveKit room is unsuitable or expired." }, { status: 409 });
+      }
+
+      const tokenExpiry = Math.min(
+        roomExpirySeconds,
+        claimExpirySeconds,
+        claim.call_status === "ringing" ? invitationExpirySeconds : roomExpirySeconds
+      );
+      const ttlSeconds = tokenExpiry - nowSeconds;
+      if (ttlSeconds <= 5) {
+        return NextResponse.json({ detail: "The call authorization is expiring." }, { status: 409 });
+      }
+      const accessToken = new AccessToken(livekit.apiKey, livekit.apiSecret, {
+        identity: authenticated.user.id,
+        name: "SkinWISE participant",
+        ttl: `${ttlSeconds}s`,
+      });
+      accessToken.addGrant({
+        roomJoin: true,
+        room: claim.room_name,
+        canPublish: true,
+        canSubscribe: true,
+      });
+      const token = await accessToken.toJwt();
+
+      const { data: claimStillValid, error: validationError } = await serviceSupabase.rpc(
+        "validate_call_session_token_claim",
+        {
+          p_session_id: params.id,
+          p_claim_id: claim.claim_id,
+          p_actor_user_id: authenticated.user.id,
+        }
+      );
+      if (validationError || claimStillValid !== true || tokenExpiry <= Math.floor(Date.now() / 1000) + 5) {
+        if (validationError) console.error("Could not validate LiveKit token claim.");
+        return NextResponse.json({ detail: "Call authorization expired before token delivery." }, { status: 409 });
+      }
+
+      return NextResponse.json({
+        token,
+        room_url: livekit.browserUrl,
+        provider: "livekit",
+        expires_at: new Date(tokenExpiry * 1000).toISOString(),
+      });
+    }
+
+    const dailyApiKey = process.env.DAILY_API_KEY;
+    const dailyDomain = process.env.DAILY_DOMAIN?.trim();
+    if (!dailyApiKey || !dailyDomain) {
+      return NextResponse.json({ detail: "Daily joining is not configured on the server." }, { status: 503 });
     }
 
     const roomResponse = await fetch(
@@ -246,10 +312,11 @@ export async function POST(
     return NextResponse.json({
       token: (tokenPayload as { token: string }).token,
       room_url: roomPayload.url,
+      provider: "daily",
       expires_at: new Date(tokenExpiry * 1000).toISOString(),
     });
   } catch {
-    console.error("Daily join-token request failed.");
+    console.error("Call join-token request failed.");
     return NextResponse.json({ detail: "Could not authorize Daily joining." }, { status: 502 });
   }
 }
