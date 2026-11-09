@@ -9,7 +9,6 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@daily-co/daily-js": "^0.94.0",
     "@supabase/ssr": "^0.5.1",
     "@supabase/supabase-js": "^2.45.4",
     "jspdf": "^2.5.2",

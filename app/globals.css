@@ -7566,6 +7566,278 @@ input:focus-visible {
   .scanner-start > div:last-child > div[role="button"].scanner-upload-dropzone { min-height: 210px; padding: 22px 14px; }
 }
 
+/* Scan & Analyze presentation refinements, scoped to its existing page. */
+.scanner-page .scanner-intro {
+  position: relative;
+  padding: clamp(0px, 1vw, 12px) 0;
+}
+
+.scanner-page .scanner-hero-portrait {
+  position: absolute;
+  z-index: 0;
+  top: 12px;
+  right: -8px;
+  width: 45%;
+  height: calc(100% - 24px);
+  min-height: 360px;
+  overflow: hidden;
+  border: 1px solid rgba(225, 220, 241, .7);
+  border-radius: 46% 46% 22px 22px;
+  background: #f3f0fa;
+  box-shadow: 0 18px 32px -28px rgba(54, 47, 100, .36);
+  pointer-events: none;
+}
+
+.scanner-page .scanner-hero-portrait::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(250, 249, 253, .96) 0%, rgba(250, 249, 253, .56) 36%, rgba(247, 245, 252, .12) 100%), linear-gradient(0deg, rgba(246, 243, 252, .45), transparent 48%);
+  content: "";
+}
+
+.scanner-page .scanner-hero-portrait img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 42%;
+}
+
+.scanner-page .scanner-intro > :not(.scanner-hero-portrait) {
+  position: relative;
+  z-index: 1;
+}
+
+.scanner-page .scanner-title {
+  max-width: 440px;
+  color: #202744;
+  font-size: clamp(38px, 4.1vw, 52px) !important;
+  line-height: 1.04;
+}
+
+.scanner-page .scanner-description {
+  max-width: 440px;
+  font-size: 15px;
+  line-height: 1.75;
+}
+
+.scanner-flow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  max-width: 490px;
+  margin: 22px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.scanner-flow li {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  color: #64708a;
+  font-size: 10px;
+  font-weight: 550;
+}
+
+.scanner-flow li span {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  flex: 0 0 25px;
+  place-items: center;
+  border: 1px solid #e4def4;
+  border-radius: 50%;
+  background: #f7f5fc;
+  color: #7162bf;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.scanner-page .scanner-skin-card {
+  min-height: 98px;
+  justify-content: space-between;
+  padding: 14px;
+  border-color: #e9e7f1;
+  background: linear-gradient(150deg, #fff, #faf9fd);
+  box-shadow: 0 5px 15px -14px rgba(44, 45, 83, .32);
+  transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease;
+}
+
+.scanner-page .scanner-skin-card:hover {
+  transform: translateY(-2px);
+  border-color: #d8d1ec;
+  box-shadow: 0 8px 19px -15px rgba(57, 48, 111, .34);
+}
+
+.scanner-page .scanner-controls {
+  padding: clamp(15px, 2.2vw, 22px);
+  border: 1px solid #e9e6f1;
+  border-radius: 22px;
+  background: linear-gradient(155deg, rgba(255,255,255,.96), rgba(250,249,253,.96));
+  box-shadow: 0 12px 28px -25px rgba(43, 38, 81, .34);
+}
+
+.scanner-page .scanner-mode-switch {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  margin-bottom: 14px;
+  padding: 4px;
+  border: 1px solid #e8e5ef;
+  border-radius: 12px;
+  background: #f3f2f7;
+}
+
+.scanner-page .scanner-mode-switch button {
+  flex: 1;
+  min-height: 41px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.scanner-page .scanner-upload-dropzone {
+  display: flex;
+  min-height: 250px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 26px 20px;
+  border: 1.5px dashed #c9c2df;
+  border-radius: 17px;
+  background: linear-gradient(155deg, #fff, #fcfbff);
+  box-shadow: none;
+}
+
+.scanner-page .scanner-upload-overline {
+  margin-bottom: 5px;
+  color: #8a83a0;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .12em;
+}
+
+.scanner-page .scanner-upload-title {
+  color: #2c3451;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.scanner-page .scanner-upload-description {
+  margin-top: 6px;
+  color: #737d91;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.scanner-page .scanner-upload-action,
+.scanner-page .scanner-capture-button {
+  min-height: 43px;
+  margin-top: 18px;
+  padding-inline: 20px;
+  border-radius: 11px;
+  background: linear-gradient(135deg, #7060cb, #5b4bb4);
+  box-shadow: 0 6px 14px -8px rgba(78, 63, 153, .38);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.scanner-page .scanner-camera-card,
+.scanner-page .scanner-camera-error {
+  padding: 17px;
+  border-color: #e8e5ef;
+  border-radius: 17px;
+  background: #fff;
+  box-shadow: none;
+}
+
+.scanner-page .scanner-camera-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 auto 13px;
+  text-align: left;
+}
+
+.scanner-camera-live {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #8f84c9;
+  box-shadow: 0 0 0 4px #f1eff9;
+}
+
+.scanner-camera-heading h2 {
+  margin: 0;
+  color: #303852;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.scanner-camera-heading p {
+  margin: 4px 0 0;
+  color: #7a8498;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.scanner-page .scanner-camera-view {
+  border-color: #e3e0ec;
+  border-radius: 14px;
+  background: #f3f2f7;
+}
+
+.scanner-page .scanner-tips {
+  margin-top: 13px;
+  padding: 14px 15px;
+  border-color: #e9e6f0;
+  border-radius: 14px;
+  background: rgba(255,255,255,.78);
+}
+
+.scanner-page .scanner-tips p {
+  margin-bottom: 8px;
+  color: #404963;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.scanner-page .scanner-tips ul { gap: 6px; }
+.scanner-page .scanner-tips li { color: #69748a; font-size: 11px; line-height: 1.55; }
+
+.scanner-page .scanner-privacy {
+  align-items: flex-start;
+  margin-top: 10px;
+  padding: 11px 13px;
+  border-color: #e8e4f1;
+  background: #f7f6fb;
+}
+
+.scanner-page .scanner-privacy-icon { margin-top: 1px; }
+.scanner-page .scanner-privacy p { color: #69738a; font-size: 10px; line-height: 1.55; }
+
+@media (max-width: 760px) {
+  .scanner-page .scanner-intro { padding: 0; }
+  .scanner-page .scanner-hero-portrait { right: 0; width: 42%; min-height: 320px; opacity: .75; }
+  .scanner-flow { max-width: none; margin-top: 18px; }
+}
+
+@media (max-width: 680px) {
+  .scanner-page .scanner-controls { padding: 14px; border-radius: 18px; }
+  .scanner-page .scanner-hero-portrait { top: 0; width: 38%; height: 300px; min-height: 0; opacity: .44; }
+  .scanner-page .scanner-skin-card { min-height: 0; }
+  .scanner-flow { gap: 5px; margin-top: 16px; }
+  .scanner-flow li { gap: 5px; font-size: 9px; }
+  .scanner-flow li span { width: 22px; height: 22px; flex-basis: 22px; }
+  .scanner-page .scanner-upload-dropzone { min-height: 220px; padding: 22px 13px; }
+  .scanner-page .scanner-camera-card,
+  .scanner-page .scanner-camera-error { padding: 13px; }
+  .scanner-page .scanner-tips { padding: 12px; }
+}
+
 /* Skin type confirmation, contained within the existing application shell. */
 .skin-confirm-page {
   width: min(100%, 1160px);

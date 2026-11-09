@@ -1,6 +1,7 @@
 "use client";
 
 import type { Routine } from "@/lib/routineEngine";
+import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 import type { ComponentType, MouseEvent } from "react";
 import { CLASS_META, type SkinClass } from "@/lib/constants";
@@ -445,7 +446,7 @@ export default function RoutineCard({
           </div>
         </div>
       </section>
-      {preview && (
+      {preview && typeof document !== "undefined" && createPortal(
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/65 p-4 sm:p-8"
           onClick={(event) => {
@@ -475,7 +476,8 @@ export default function RoutineCard({
               onError={() => setPreview(null)}
             />
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

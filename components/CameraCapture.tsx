@@ -69,6 +69,13 @@ export default function CameraCapture({ onImageReady }: CameraCaptureProps) {
 
   return (
     <div className="scanner-camera-card rounded-2xl border border-line bg-panel panel-elevated p-6 text-center">
+      <div className="scanner-camera-heading">
+        <span className="scanner-camera-live" aria-hidden="true" />
+        <div>
+          <h2>Camera preview</h2>
+          <p>Position your face comfortably inside the frame.</p>
+        </div>
+      </div>
       <div className="scanner-camera-view relative w-full max-w-xs mx-auto aspect-square rounded-xl overflow-hidden border border-line bg-ink/5">
         <video
           ref={videoRef}

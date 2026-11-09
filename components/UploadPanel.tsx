@@ -67,8 +67,9 @@ export default function UploadPanel({ onImageReady }: UploadPanelProps) {
           strokeLinejoin="round"
         />
       </svg>
+      <span className="scanner-upload-overline">IMAGE INPUT</span>
       <p className="scanner-upload-title font-medium text-ink">Drop your photo here</p>
-      <p className="text-sm text-muted mt-1">JPG, PNG, or WebP · clear, frontal photos work best</p>
+      <p className="scanner-upload-description">JPG, PNG, or WebP · clear, frontal photos work best</p>
       <span className="scanner-upload-action" aria-hidden="true">Choose a photo</span>
     </div>
   );

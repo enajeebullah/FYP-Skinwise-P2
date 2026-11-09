@@ -16,58 +16,6 @@ type TokenClaim = {
   claim_expires_at: string;
 };
 
-type DailyRoom = {
-  name: string;
-  privacy: string;
-  url: string;
-  config?: { exp?: unknown };
-};
-
-function sanitizedDailyError(responseBody: unknown) {
-  if (typeof responseBody !== "object" || responseBody === null) {
-    return { response: "non-json response" };
-  }
-
-  const body = responseBody as Record<string, unknown>;
-  const safeFields: Record<string, unknown> = {};
-  for (const key of ["error", "info", "message", "status"]) {
-    const value = body[key];
-    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-      safeFields[key] = typeof value === "string" ? value.slice(0, 300) : value;
-    }
-  }
-  return Object.keys(safeFields).length > 0 ? safeFields : { response: "no safe diagnostic fields" };
-}
-
-async function logDailyFailure(operation: string, response: Response) {
-  let sanitizedError: Record<string, unknown>;
-  try {
-    sanitizedError = sanitizedDailyError(await response.clone().json()) as Record<string, unknown>;
-  } catch {
-    sanitizedError = { response: "non-json response" };
-  }
-  console.error("Daily API request failed:", {
-    operation,
-    status: response.status,
-    error: sanitizedError,
-  });
-}
-
-function dailyRoomHost(domain: string) {
-  const host = domain.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
-  return host.endsWith(".daily.co") ? host : `${host}.daily.co`;
-}
-
-function isDailyRoom(value: unknown): value is DailyRoom {
-  if (typeof value !== "object" || value === null) return false;
-  const room = value as Partial<DailyRoom>;
-  return (
-    typeof room.name === "string" &&
-    typeof room.privacy === "string" &&
-    typeof room.url === "string"
-  );
-}
-
 function getTokenClaim(value: unknown): TokenClaim | null {
   const claim = Array.isArray(value) ? value[0] : value;
   if (typeof claim !== "object" || claim === null) return null;
@@ -115,7 +63,7 @@ export async function POST(
       if (claimError.message === "call_token_not_authorized") {
         return NextResponse.json({ detail: "This call is not available to join." }, { status: 403 });
       }
-      console.error("Could not create Daily token claim.");
+      console.error("Could not create call token claim.");
       return NextResponse.json({ detail: "Could not authorize joining this call." }, { status: 500 });
     }
 
@@ -191,132 +139,9 @@ export async function POST(
       });
     }
 
-    const dailyApiKey = process.env.DAILY_API_KEY;
-    const dailyDomain = process.env.DAILY_DOMAIN?.trim();
-    if (!dailyApiKey || !dailyDomain) {
-      return NextResponse.json({ detail: "Daily joining is not configured on the server." }, { status: 503 });
-    }
-
-    const roomResponse = await fetch(
-      `https://api.daily.co/v1/rooms/${encodeURIComponent(claim.room_name)}`,
-      {
-        headers: { Authorization: `Bearer ${dailyApiKey}` },
-        cache: "no-store",
-      }
-    );
-    if (!roomResponse.ok) {
-      await logDailyFailure("retrieve room (GET /v1/rooms/{room_name})", roomResponse);
-      return NextResponse.json({ detail: "The Daily room is unavailable." }, { status: 409 });
-    }
-
-    const roomPayload: unknown = await roomResponse.json();
-    if (!isDailyRoom(roomPayload)) {
-      return NextResponse.json({ detail: "The Daily room response was invalid." }, { status: 502 });
-    }
-
-    let roomUrl: URL;
-    try {
-      roomUrl = new URL(roomPayload.url);
-    } catch {
-      return NextResponse.json({ detail: "The Daily room URL was invalid." }, { status: 502 });
-    }
-
-    const expectedHost = dailyRoomHost(dailyDomain);
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    const invitationExpirySeconds = Math.floor(
-      new Date(claim.invitation_expires_at).getTime() / 1000
-    );
-    const roomExpirySeconds = Math.floor(new Date(claim.room_expires_at).getTime() / 1000);
-    const claimExpirySeconds = Math.floor(new Date(claim.claim_expires_at).getTime() / 1000);
-    if (
-      roomPayload.name !== claim.room_name ||
-      roomPayload.privacy !== "private" ||
-      roomUrl.protocol !== "https:" ||
-      roomUrl.hostname !== expectedHost ||
-      typeof roomPayload.config?.exp !== "number" ||
-      !Number.isFinite(roomPayload.config.exp) ||
-      roomPayload.config.exp <= nowSeconds ||
-      !Number.isFinite(invitationExpirySeconds) ||
-      (claim.call_status === "ringing" && invitationExpirySeconds <= nowSeconds) ||
-      !Number.isFinite(roomExpirySeconds) ||
-      roomExpirySeconds <= nowSeconds ||
-      !Number.isFinite(claimExpirySeconds) ||
-      claimExpirySeconds <= nowSeconds
-    ) {
-      return NextResponse.json({ detail: "The Daily room is unsuitable or expired." }, { status: 409 });
-    }
-
-    const tokenExpiry = Math.min(
-      roomExpirySeconds,
-      claimExpirySeconds,
-      roomPayload.config.exp
-    );
-    if (tokenExpiry <= nowSeconds + 5) {
-      return NextResponse.json({ detail: "The call authorization is expiring." }, { status: 409 });
-    }
-
-    const tokenResponse = await fetch("https://api.daily.co/v1/meeting-tokens", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${dailyApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        properties: {
-          room_name: claim.room_name,
-          exp: tokenExpiry,
-          eject_at_token_exp: false,
-          enable_screenshare: false,
-          user_name: "SkinWISE participant",
-          permissions: {
-            hasPresence: true,
-            canSend: true,
-            canReceive: { base: true },
-            canAdmin: false,
-          },
-        },
-      }),
-      cache: "no-store",
-    });
-
-    if (!tokenResponse.ok) {
-      await logDailyFailure("create meeting token (POST /v1/meeting-tokens)", tokenResponse);
-      return NextResponse.json({ detail: "Could not authorize Daily joining." }, { status: 502 });
-    }
-
-    const tokenPayload: unknown = await tokenResponse.json();
-    if (
-      typeof tokenPayload !== "object" ||
-      tokenPayload === null ||
-      typeof (tokenPayload as { token?: unknown }).token !== "string"
-    ) {
-      return NextResponse.json({ detail: "Daily returned an invalid meeting token." }, { status: 502 });
-    }
-
-    const { data: claimStillValid, error: validationError } = await serviceSupabase.rpc(
-      "validate_call_session_token_claim",
-      {
-        p_session_id: params.id,
-        p_claim_id: claim.claim_id,
-        p_actor_user_id: authenticated.user.id,
-      }
-    );
-    if (validationError || claimStillValid !== true) {
-      if (validationError) console.error("Could not validate Daily token claim.");
-      return NextResponse.json({ detail: "Call authorization expired before token delivery." }, { status: 409 });
-    }
-    if (tokenExpiry <= Math.floor(Date.now() / 1000) + 5) {
-      return NextResponse.json({ detail: "Call authorization expired before token delivery." }, { status: 409 });
-    }
-
-    return NextResponse.json({
-      token: (tokenPayload as { token: string }).token,
-      room_url: roomPayload.url,
-      provider: "daily",
-      expires_at: new Date(tokenExpiry * 1000).toISOString(),
-    });
+    return NextResponse.json({ detail: "This call session uses an unsupported media provider." }, { status: 409 });
   } catch {
     console.error("Call join-token request failed.");
-    return NextResponse.json({ detail: "Could not authorize Daily joining." }, { status: 502 });
+    return NextResponse.json({ detail: "Could not authorize call joining." }, { status: 502 });
   }
 }

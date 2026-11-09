@@ -153,17 +153,26 @@ export default function ScannerApp({ userId }: { userId: string }) {
   return (
     <section className="scanner-start scanner-page max-w-5xl mx-auto px-6 pt-16 pb-8 grid md:grid-cols-2 gap-14 items-start">
       <div className="scanner-intro">
+        <div className="scanner-hero-portrait" aria-hidden="true">
+          <img src="/images/scan-hero-portrait.webp" alt="" />
+        </div>
         <p className="scanner-eyebrow font-mono text-xs uppercase tracking-wider text-muted mb-4">
           Photo in → reading out
         </p>
         <h1 className="scanner-title font-display text-[2.6rem] sm:text-5xl leading-[1.08]">
-          Your skin, read in one frame.
+          A clearer picture of your skin.
         </h1>
         <p className="scanner-description mt-5 text-[17px] leading-relaxed text-ink/75 max-w-md">
           Start with a clear frontal photo. SkinWISE analyses visible skin
           characteristics and acne, then brings your results together in a
           personal skin dashboard.
         </p>
+
+        <ol className="scanner-flow" aria-label="Analysis steps">
+          <li><span>01</span> Add a photo</li>
+          <li><span>02</span> Confirm skin type</li>
+          <li><span>03</span> Review results</li>
+        </ol>
 
         <div className="scanner-skin-types mt-8">
           {(["dry", "normal", "oily"] as const).map((c) => (
@@ -209,7 +218,7 @@ export default function ScannerApp({ userId }: { userId: string }) {
               <CameraCapture onImageReady={handleImageReady} />
             )}
             <div className="scanner-tips">
-              <p>For the clearest result</p>
+              <p>Get the clearest result</p>
               <ul>
                 <li>Face the camera straight on in soft, even light.</li>
                 <li>Keep your face clear of filters, makeup, and obstructions.</li>

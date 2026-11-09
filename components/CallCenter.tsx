@@ -1,7 +1,6 @@
 "use client";
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import type { DailyCall, DailyEventObject } from "@daily-co/daily-js";
 import { Room, RoomEvent, Track } from "livekit-client";
 import { createClient } from "@/lib/supabase/client";
 
@@ -18,7 +17,7 @@ type CallSession = {
   caller_name?: string;
 };
 
-type CallCredentials = { roomUrl: string; token: string; sessionId: string; callMode: CallMode; provider: "daily" | "livekit" };
+type CallCredentials = { roomUrl: string; token: string; sessionId: string; callMode: CallMode };
 type MediaControls = { toggleMicrophone: () => Promise<boolean>; toggleCamera: () => Promise<boolean> };
 
 type ApiError = { detail?: string };
@@ -29,37 +28,6 @@ async function apiError(response: Response) {
     return result.detail || "The call request could not be completed.";
   } catch {
     return "The call request could not be completed.";
-  }
-}
-
-async function destroyCall(call: DailyCall | null, detachListeners?: () => void) {
-  if (!call) return;
-  try {
-    call.setLocalAudio(false, { forceDiscardTrack: true });
-  } catch {
-    // Media tracks may already have been released.
-  }
-  try {
-    call.setLocalVideo(false);
-  } catch {
-    // Media tracks may already have been released.
-  }
-  try {
-    detachListeners?.();
-  } catch {
-    // Listener cleanup is best-effort if the Daily instance is already destroyed.
-  }
-  try {
-    if (call.meetingState() !== "left-meeting") {
-      await call.leave();
-    }
-  } catch {
-    // The call may already have ended or lost its connection.
-  }
-  try {
-    await call.destroy();
-  } catch {
-    // Destroy is best-effort cleanup after leaving.
   }
 }
 
@@ -255,11 +223,8 @@ export default function CallCenter() {
   const [muted, setMuted] = useState(false);
   const [cameraOff, setCameraOff] = useState(false);
   const [otherDisconnected, setOtherDisconnected] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const callRef = useRef<DailyCall | null>(null);
   const liveKitControlsRef = useRef<MediaControls | null>(null);
   const activeStatusRequestsRef = useRef(new Set<string>());
-  const callCleanupRef = useRef<(() => Promise<void>) | null>(null);
   const sessionRef = useRef<CallSession | null>(null);
   const busyRef = useRef(false);
   const pollInFlightRef = useRef(false);
@@ -281,9 +246,6 @@ export default function CallCenter() {
   }
 
   const closeSession = useCallback(async (text: string) => {
-    const cleanupCall = callCleanupRef.current;
-    callRef.current = null;
-    callCleanupRef.current = null;
     sessionRef.current = null;
     setCredentials(null);
     setSession(null);
@@ -292,7 +254,6 @@ export default function CallCenter() {
     setNotice(text);
     setOtherDisconnected(false);
     busyRef.current = false;
-    await cleanupCall?.();
   }, []);
 
   const joinCall = useCallback(async (target: CallSession) => {
@@ -305,14 +266,13 @@ export default function CallCenter() {
         cache: "no-store",
       });
       if (!response.ok) throw new Error(await apiError(response));
-      const result = (await response.json()) as { token?: string; room_url?: string; provider?: "daily" | "livekit" };
+      const result = (await response.json()) as { token?: string; room_url?: string };
       if (!result.token || !result.room_url) throw new Error("The call token response was incomplete.");
       setCredentials({
         roomUrl: result.room_url,
         token: result.token,
         sessionId: target.id,
         callMode: target.call_mode,
-        provider: result.provider === "daily" ? "daily" : "livekit",
       });
       setPhase("joining");
     } catch (error) {
@@ -368,87 +328,6 @@ export default function CallCenter() {
     window.addEventListener("skinwise:start-call", handleStart);
     return () => window.removeEventListener("skinwise:start-call", handleStart);
   }, [startCall]);
-
-  useEffect(() => {
-    let disposed = false;
-    let call: DailyCall | null = null;
-
-    if (!credentials || credentials.provider !== "daily" || !containerRef.current) return;
-
-    const createAndJoin = async () => {
-      try {
-        const { default: DailyIframe } = await import("@daily-co/daily-js");
-        if (disposed || !containerRef.current) return;
-        call = DailyIframe.createFrame(containerRef.current, {
-          showLeaveButton: false,
-          showLocalVideo: true,
-          showFullscreenButton: true,
-          startVideoOff: credentials.callMode === "audio",
-          iframeStyle: { width: "100%", height: "min(62vh, 620px)", border: "0" },
-        });
-        callRef.current = call;
-        const onJoined = () => {
-          setPhase("joined");
-          setMuted(false);
-          setCameraOff(credentials.callMode === "audio");
-          void markCallActive(credentials.sessionId);
-        };
-        const onParticipantLeft = (event: DailyEventObject<"participant-left">) => {
-          if (!event.participant.local) setOtherDisconnected(true);
-        };
-        const onParticipantJoined = (event: DailyEventObject<"participant-joined">) => {
-          if (!event.participant.local) setOtherDisconnected(false);
-        };
-        const onCameraError = () => {
-          setMessage("Camera or microphone access was denied. Allow access in your browser settings, then retry.");
-        };
-        const onError = () => {
-          setMessage("Daily could not connect this call. Check your network and device permissions.");
-        };
-        const onLeftMeeting = () => {
-          if (!disposed && sessionRef.current) setPhase("error");
-        };
-        call.on("joined-meeting", onJoined);
-        call.on("participant-left", onParticipantLeft);
-        call.on("participant-joined", onParticipantJoined);
-        call.on("camera-error", onCameraError);
-        call.on("error", onError);
-        call.on("left-meeting", onLeftMeeting);
-        const detachListeners = () => {
-          call?.off("joined-meeting", onJoined);
-          call?.off("participant-left", onParticipantLeft);
-          call?.off("participant-joined", onParticipantJoined);
-          call?.off("camera-error", onCameraError);
-          call?.off("error", onError);
-          call?.off("left-meeting", onLeftMeeting);
-        };
-        const cleanupCall = async () => {
-          await destroyCall(call, detachListeners);
-          if (callCleanupRef.current === cleanupCall) callCleanupRef.current = null;
-        };
-        callCleanupRef.current = cleanupCall;
-        await call.join({ url: credentials.roomUrl, token: credentials.token });
-      } catch (error) {
-        if (disposed) return;
-        const denied = error instanceof DOMException && error.name === "NotAllowedError";
-        setPhase("error");
-        setMessage(denied
-          ? "Camera or microphone permission was denied. Allow access in your browser settings, then retry."
-          : error instanceof Error ? error.message : "Could not connect to Daily.");
-      }
-    };
-
-    void createAndJoin();
-    return () => {
-      disposed = true;
-      if (callRef.current === call) {
-        callRef.current = null;
-        const cleanup = callCleanupRef.current;
-        callCleanupRef.current = null;
-        void (cleanup ? cleanup() : destroyCall(call));
-      }
-    };
-  }, [credentials]);
 
   useEffect(() => {
     let stopped = false;
@@ -727,27 +606,11 @@ export default function CallCenter() {
   }
 
   function toggleMicrophone() {
-    if (credentials?.provider === "livekit") {
-      void liveKitControlsRef.current?.toggleMicrophone().then(setMuted).catch((error) => setMessage(error instanceof Error ? error.message : "Could not change the microphone."));
-      return;
-    }
-    const call = callRef.current;
-    if (!call) return;
-    const nextMuted = call.localAudio();
-    call.setLocalAudio(!nextMuted);
-    setMuted(nextMuted);
+    void liveKitControlsRef.current?.toggleMicrophone().then(setMuted).catch((error) => setMessage(error instanceof Error ? error.message : "Could not change the microphone."));
   }
 
   function toggleCamera() {
-    if (credentials?.provider === "livekit") {
-      void liveKitControlsRef.current?.toggleCamera().then(setCameraOff).catch((error) => setMessage(error instanceof Error ? error.message : "Could not change the camera."));
-      return;
-    }
-    const call = callRef.current;
-    if (!call) return;
-    const nextCameraOff = call.localVideo();
-    call.setLocalVideo(!nextCameraOff);
-    setCameraOff(nextCameraOff);
+    void liveKitControlsRef.current?.toggleCamera().then(setCameraOff).catch((error) => setMessage(error instanceof Error ? error.message : "Could not change the camera."));
   }
 
   const isIncoming = Boolean(session && !credentials && phase === "idle" && session.call_status === "ringing");
@@ -776,14 +639,14 @@ export default function CallCenter() {
       )}
       {session && !isIncoming && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#142B49]/65 p-3 sm:p-6" role="presentation">
-          <section role="dialog" aria-modal="true" aria-labelledby="daily-call-title" className="w-full max-w-5xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <section role="dialog" aria-modal="true" aria-labelledby="call-title" className="w-full max-w-5xl overflow-hidden rounded-2xl bg-white shadow-2xl">
             <header className="flex items-center justify-between gap-3 border-b border-[#DCE5EF] px-4 py-3 sm:px-6">
               <div>
-                <h2 id="daily-call-title" className="font-semibold text-[#142B49]">SkinWISE {session.call_mode} consultation</h2>
+                <h2 id="call-title" className="font-semibold text-[#142B49]">SkinWISE {session.call_mode} consultation</h2>
                 <p className="text-xs text-[#64748B]">{phase === "joined" ? otherDisconnected ? "The other participant disconnected." : "Connected" : phase === "joining" || phase === "working" ? "Connecting securely…" : session.call_status === "ringing" ? "Waiting for the other participant to accept…" : "Call session"}</p>
               </div>
             </header>
-            {credentials?.provider === "livekit" ? (
+            {credentials ? (
               <LiveKitCallSurface
                 ref={liveKitControlsRef}
                 credentials={credentials}
@@ -807,7 +670,7 @@ export default function CallCenter() {
                 onParticipantConnected={() => setOtherDisconnected(false)}
                 onError={(text) => { setPhase("error"); setMessage(text); }}
               />
-            ) : <div ref={containerRef} className="min-h-48 bg-[#101A28]" />}
+            ) : <div className="min-h-48 bg-[#101A28]" />}
             {message && <p role="alert" className="mx-4 mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800 sm:mx-6">{message}</p>}
             {phase === "error" && (
               <div className="flex justify-end px-4 pt-3 sm:px-6">
@@ -815,8 +678,8 @@ export default function CallCenter() {
               </div>
             )}
             <footer className="flex flex-wrap items-center justify-center gap-3 border-t border-[#DCE5EF] bg-white px-4 py-3">
-              <button type="button" disabled={phase !== "joined" || (credentials?.provider === "livekit" ? !liveKitControlsRef.current : !callRef.current)} onClick={toggleMicrophone} className="min-h-10 rounded-lg border border-[#DCE5EF] px-4 py-2 text-sm font-semibold text-[#243449] disabled:opacity-50">{muted ? "Unmute microphone" : "Mute microphone"}</button>
-              <button type="button" disabled={phase !== "joined" || (credentials?.provider === "livekit" ? !liveKitControlsRef.current : !callRef.current)} onClick={toggleCamera} className="min-h-10 rounded-lg border border-[#DCE5EF] px-4 py-2 text-sm font-semibold text-[#243449] disabled:opacity-50">{cameraOff ? "Turn camera on" : "Turn camera off"}</button>
+              <button type="button" disabled={phase !== "joined" || !liveKitControlsRef.current} onClick={toggleMicrophone} className="min-h-10 rounded-lg border border-[#DCE5EF] px-4 py-2 text-sm font-semibold text-[#243449] disabled:opacity-50">{muted ? "Unmute microphone" : "Mute microphone"}</button>
+              <button type="button" disabled={phase !== "joined" || !liveKitControlsRef.current} onClick={toggleCamera} className="min-h-10 rounded-lg border border-[#DCE5EF] px-4 py-2 text-sm font-semibold text-[#243449] disabled:opacity-50">{cameraOff ? "Turn camera on" : "Turn camera off"}</button>
               <button type="button" onClick={() => void endCall()} disabled={phase === "ending" || phase === "working"} className="min-h-11 rounded-lg bg-[#A5404A] px-6 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-[#8F3540] focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60" aria-label="End video call">{phase === "ending" ? "Ending call…" : "End Call"}</button>
             </footer>
           </section>
