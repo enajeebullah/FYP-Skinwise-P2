@@ -36,6 +36,7 @@
     ".next-history-validation/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "fyp-skinwise/part1/frontend"
   ]
 }

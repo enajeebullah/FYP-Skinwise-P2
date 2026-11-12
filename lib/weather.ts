@@ -29,8 +29,8 @@ export async function fetchWeather(): Promise<WeatherData> {
   const { latitude, longitude } = position.coords;
 
   const url =
-    `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
-    `&current=temperature_2m,relative_humidity_2m,uv_index&timezone=auto`;
+     `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
+     `&current=temperature_2m,relative_humidity_2m,uv_index&timezone=auto`;
 
   const res = await fetch(url);
   if (!res.ok) throw new Error("Weather service unavailable.");

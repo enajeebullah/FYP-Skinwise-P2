@@ -18,12 +18,7 @@ export function isRoutine(value: unknown): value is Routine {
         typeof (item as Record<string, unknown>).reason === "string" &&
         ((item as Record<string, unknown>).usageTip === undefined ||
           typeof (item as Record<string, unknown>).usageTip === "string") &&
-        // timeOfDay is intentionally NOT required — older saved scans
-        // (from before this field existed) won't have it, and we don't
-        // want to invalidate their whole routine just for a missing
-        // display-ordering hint. See RoutinePage's acne-care split logic
-        // for how a missing value is handled at display time instead of
-        // at validation time (it falls back to the Evening column).
+        
         ((item as Record<string, unknown>).timeOfDay === undefined ||
           (item as Record<string, unknown>).timeOfDay === "AM" ||
           (item as Record<string, unknown>).timeOfDay === "PM")
