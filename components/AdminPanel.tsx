@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
+import UserMenu from "@/components/UserMenu";
 
 type Section = "overview" | "doctors" | "appointments" | "payments" | "refunds" | "complaints" | "users";
 type AppointmentStatus = "pending" | "confirmed" | "completed" | "cancelled" | "rejected";
@@ -33,10 +34,10 @@ interface Appointment {
   appointment_time: string;
   patient_message: string;
   status: AppointmentStatus;
-  meeting_link: string | null;
   created_at: string;
   patient_name: string | null;
   doctor_name: string;
+  admin_archived_at: string | null;
 }
 
 interface PatientProfile {
@@ -123,6 +124,10 @@ const EMPTY_DOCTOR: DoctorForm = {
   is_verified: false,
 };
 
+const DOCTOR_IMAGE_BUCKET = "dermatologist-profile-images";
+const MAX_DOCTOR_IMAGE_SIZE = 5 * 1024 * 1024;
+const ALLOWED_DOCTOR_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
 const sections: { id: Section; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "doctors", label: "Dermatologists" },
@@ -183,7 +188,25 @@ function formatTimestamp(value: string | null) {
   return value ? new Date(value).toLocaleString() : "—";
 }
 
-export default function AdminPanel() {
+interface AdminPanelProps {
+  email?: string;
+  fullName?: string | null;
+}
+
+function AdminIcon({ section }: { section: Section }) {
+  const paths: Record<Section, ReactNode> = {
+    overview: <><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1V10Z" /><path d="M9 21v-7h6v7" /></>,
+    doctors: <><path d="M8 3v5a4 4 0 0 0 8 0V3M6 3h4M14 3h4M12 12v2a4 4 0 0 0 8 0v-1" /><circle cx="20" cy="11" r="1.5" /></>,
+    appointments: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18M8 14h3M8 17h6" /></>,
+    payments: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 10h18M7 15h4" /></>,
+    refunds: <><path d="M4 7v5h5M20 17v-5h-5" /><path d="M5.5 12a7 7 0 0 1 12-4L20 11M18.5 12a7 7 0 0 1-12 4L4 13" /></>,
+    complaints: <><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H7l-3 2v-5.5a7.5 7.5 0 1 1 16-4Z" /><path d="M9 10h6M9 13h4" /></>,
+    users: <><circle cx="9" cy="8" r="3" /><path d="M3 20c.5-3.5 2.5-5 6-5s5.5 1.5 6 5M16 5a3 3 0 0 1 0 6M17 15c2.5.3 3.7 1.8 4 4" /></>,
+  };
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[section]}</svg>;
+}
+
+export default function AdminPanel({ email = "", fullName = null }: AdminPanelProps = {}) {
   const [section, setSection] = useState<Section>("overview");
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -203,9 +226,22 @@ export default function AdminPanel() {
     confirmed: 0,
   });
   const [doctorForm, setDoctorForm] = useState<DoctorForm>(EMPTY_DOCTOR);
+  const [doctorImageFile, setDoctorImageFile] = useState<File | null>(null);
+  const [doctorImagePreview, setDoctorImagePreview] = useState<string | null>(null);
+  const [doctorImageError, setDoctorImageError] = useState<string | null>(null);
+  const [uploadingDoctorImage, setUploadingDoctorImage] = useState(false);
+  const doctorImageInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!doctorImagePreview) return;
+    return () => URL.revokeObjectURL(doctorImagePreview);
+  }, [doctorImagePreview]);
   const [editingDoctor, setEditingDoctor] = useState<string | null>(null);
   const [appointmentFilter, setAppointmentFilter] = useState<"all" | AppointmentStatus>("all");
-  const [meetingLinks, setMeetingLinks] = useState<Record<string, string>>({});
+  const [appointmentArchiveFilter, setAppointmentArchiveFilter] = useState<"active" | "archived">("active");
+  const [appointmentSearch, setAppointmentSearch] = useState("");
+  const [appointmentToArchive, setAppointmentToArchive] = useState<Appointment | null>(null);
+  const [appointmentActionId, setAppointmentActionId] = useState<string | null>(null);
   const [paymentReasons, setPaymentReasons] = useState<Record<string, string>>({});
   const [refundDecisionReasons, setRefundDecisionReasons] = useState<Record<string, string>>({});
   const [refundPrivateNotes, setRefundPrivateNotes] = useState<Record<string, string>>({});
@@ -244,7 +280,7 @@ export default function AdminPanel() {
         supabase.from("doctors").select("*").order("created_at", { ascending: false }),
         supabase
           .from("admin_appointments")
-          .select("id, patient_id, doctor_id, appointment_date, appointment_time, patient_message, status, meeting_link, created_at, patient_name, doctor_name")
+          .select("id, patient_id, doctor_id, appointment_date, appointment_time, patient_message, status, created_at, patient_name, doctor_name, admin_archived_at")
           .order("created_at", { ascending: false }),
         supabase.from("admin_user_directory").select("id, full_name, created_at").order("created_at", { ascending: false }),
         supabase
@@ -320,14 +356,6 @@ export default function AdminPanel() {
     } else if (!complaintResult.error) {
       setComplaintDataError(`Could not load private complaint notes: ${complaintNotesResult.error.message}`);
     }
-    setMeetingLinks(
-      Object.fromEntries(
-        ((appointmentResult.data ?? []) as unknown as Appointment[]).map((item) => [
-          item.id,
-          item.meeting_link ?? "",
-        ])
-      )
-    );
     setLoading(false);
   }, []);
 
@@ -336,6 +364,9 @@ export default function AdminPanel() {
   }, [loadData]);
 
   function beginEdit(doctor: Doctor) {
+    setDoctorImageFile(null);
+    setDoctorImagePreview(null);
+    setDoctorImageError(null);
     setEditingDoctor(doctor.id);
     setDoctorForm({
       user_id: doctor.user_id ?? "",
@@ -353,6 +384,43 @@ export default function AdminPanel() {
     setSection("doctors");
   }
 
+  function selectDoctorImage(file: File | undefined) {
+    setDoctorImageError(null);
+    if (!file) return;
+    if (!ALLOWED_DOCTOR_IMAGE_TYPES.includes(file.type)) {
+      setDoctorImageFile(null);
+      setDoctorImagePreview(null);
+      setDoctorImageError("Choose a JPG, PNG, or WebP image.");
+      if (doctorImageInputRef.current) doctorImageInputRef.current.value = "";
+      return;
+    }
+    if (file.size > MAX_DOCTOR_IMAGE_SIZE) {
+      setDoctorImageFile(null);
+      setDoctorImagePreview(null);
+      setDoctorImageError("Image must be 5 MB or smaller.");
+      if (doctorImageInputRef.current) doctorImageInputRef.current.value = "";
+      return;
+    }
+    setDoctorImageFile(file);
+    setDoctorImagePreview(URL.createObjectURL(file));
+  }
+
+  function clearDoctorImage() {
+    setDoctorImageFile(null);
+    setDoctorImagePreview(null);
+    setDoctorImageError(null);
+    setDoctorForm((current) => ({ ...current, image_url: "" }));
+    if (doctorImageInputRef.current) doctorImageInputRef.current.value = "";
+  }
+
+  function resetDoctorForm() {
+    setDoctorForm(EMPTY_DOCTOR);
+    setDoctorImageFile(null);
+    setDoctorImagePreview(null);
+    setDoctorImageError(null);
+    if (doctorImageInputRef.current) doctorImageInputRef.current.value = "";
+  }
+
   async function saveDoctor(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
@@ -367,6 +435,34 @@ export default function AdminPanel() {
       return;
     }
 
+    const supabase = createClient();
+    let imageUrl = doctorForm.image_url.trim() || null;
+    let uploadedImagePath: string | null = null;
+
+    if (doctorImageFile) {
+      setUploadingDoctorImage(true);
+      const extensionByType: Record<string, string> = {
+        "image/jpeg": "jpg",
+        "image/png": "png",
+        "image/webp": "webp",
+      };
+      uploadedImagePath = `doctors/${crypto.randomUUID()}.${extensionByType[doctorImageFile.type]}`;
+      const { error: uploadError } = await supabase.storage
+        .from(DOCTOR_IMAGE_BUCKET)
+        .upload(uploadedImagePath, doctorImageFile, {
+          contentType: doctorImageFile.type,
+          cacheControl: "3600",
+          upsert: false,
+        });
+      setUploadingDoctorImage(false);
+      if (uploadError) {
+        setDoctorImageError(`Could not upload profile image: ${uploadError.message}`);
+        setSaving(false);
+        return;
+      }
+      imageUrl = supabase.storage.from(DOCTOR_IMAGE_BUCKET).getPublicUrl(uploadedImagePath).data.publicUrl;
+    }
+
     const payload = {
       user_id: doctorForm.user_id.trim() || null,
       name: doctorForm.name.trim(),
@@ -374,24 +470,34 @@ export default function AdminPanel() {
       specialization: doctorForm.specialization.trim(),
       experience,
       bio: doctorForm.bio.trim(),
-      image_url: doctorForm.image_url.trim() || null,
+      image_url: imageUrl,
       available_days: doctorForm.available_days.split(",").map((day) => day.trim()).filter(Boolean),
       available_time: doctorForm.available_time.trim(),
       consultation_fee: fee,
       is_verified: doctorForm.is_verified,
     };
-    const supabase = createClient();
     const result = editingDoctor
       ? await supabase.from("doctors").update(payload).eq("id", editingDoctor)
       : await supabase.from("doctors").insert(payload);
 
     if (result.error) {
-      setError(`Could not save dermatologist: ${result.error.message}`);
+      let saveError = `Could not save dermatologist: ${result.error.message}`;
+      if (uploadedImagePath) {
+        const { error: cleanupError } = await supabase.storage
+          .from(DOCTOR_IMAGE_BUCKET)
+          .remove([uploadedImagePath]);
+        if (cleanupError) saveError += ` The uploaded image could not be removed: ${cleanupError.message}`;
+      }
+      setError(saveError);
       setSaving(false);
       return;
     }
 
     setDoctorForm(EMPTY_DOCTOR);
+    setDoctorImageFile(null);
+    setDoctorImagePreview(null);
+    setDoctorImageError(null);
+    if (doctorImageInputRef.current) doctorImageInputRef.current.value = "";
     setEditingDoctor(null);
     setNotice(editingDoctor ? "Dermatologist details updated." : "Dermatologist added.");
     await loadData();
@@ -414,22 +520,10 @@ export default function AdminPanel() {
 
   async function updateAppointment(
     appointment: Appointment,
-    updates: { status?: AppointmentStatus; meeting_link?: string | null }
+    updates: { status: AppointmentStatus }
   ) {
     setError(null);
     setNotice(null);
-    if (updates.meeting_link) {
-      try {
-        const url = new URL(updates.meeting_link);
-        if (url.protocol !== "https:" && url.protocol !== "http:") {
-          setError("Meeting links must use HTTP or HTTPS.");
-          return;
-        }
-      } catch {
-        setError("Enter a valid online meeting URL.");
-        return;
-      }
-    }
     const { error: updateError } = await createClient()
       .from("appointments")
       .update(updates)
@@ -440,6 +534,25 @@ export default function AdminPanel() {
     }
     setNotice("Appointment updated.");
     await loadData();
+  }
+
+  async function setAppointmentArchived(appointment: Appointment, archived: boolean) {
+    setError(null);
+    setNotice(null);
+    setAppointmentActionId(appointment.id);
+    const { data: archivedResult, error: archiveError } = await createClient().rpc("set_admin_appointment_archived", {
+      p_appointment_id: appointment.id,
+      p_archived: archived,
+    });
+    if (archiveError || !archivedResult) {
+      setError(`Could not ${archived ? "archive" : "restore"} appointment: ${archiveError?.message ?? "The appointment was not found."}`);
+      setAppointmentActionId(null);
+      return;
+    }
+    setAppointmentToArchive(null);
+    setNotice(archived ? "Appointment archived." : "Appointment restored.");
+    await loadData();
+    setAppointmentActionId(null);
   }
 
   async function resolveDemoPayment(payment: ConsultationPayment, status: "simulated_paid" | "failed") {
@@ -571,41 +684,72 @@ export default function AdminPanel() {
 
   const appointmentById = new Map(appointments.map((appointment) => [appointment.id, appointment]));
   const paymentById = new Map(consultationPayments.map((payment) => [payment.id, payment]));
-  const filteredAppointments =
-    appointmentFilter === "all"
-      ? appointments
-      : appointments.filter((appointment) => appointment.status === appointmentFilter);
+  const filteredAppointments = appointments.filter((appointment) => {
+    const matchesArchive = appointmentArchiveFilter === "archived"
+      ? Boolean(appointment.admin_archived_at)
+      : !appointment.admin_archived_at;
+    const matchesStatus = appointmentFilter === "all" || appointment.status === appointmentFilter;
+    const query = appointmentSearch.trim().toLowerCase();
+    const matchesSearch = !query || [
+      appointment.patient_name ?? "",
+      appointment.doctor_name ?? "",
+      appointment.id,
+      appointment.patient_message,
+    ].some((value) => value.toLowerCase().includes(query));
+    return matchesArchive && matchesStatus && matchesSearch;
+  });
+
+  const openComplaints = complaintDataError ? null : complaints.filter((complaint) => complaint.status === "open" || complaint.status === "in_review").length;
+  const appointmentStatusCounts = statuses.reduce<Record<AppointmentStatus, number>>((result, status) => {
+    result[status] = appointments.filter((appointment) => appointment.status === status).length;
+    return result;
+  }, { pending: 0, confirmed: 0, completed: 0, cancelled: 0, rejected: 0 });
+  const chartStatuses: AppointmentStatus[] = ["confirmed", "pending", "completed", "cancelled", "rejected"];
+  const appointmentTotal = appointments.length;
+  const chartColors: Record<AppointmentStatus, string> = {
+    confirmed: "#7964e8", pending: "#63a4f5", completed: "#43c7a6", cancelled: "#c9cadd", rejected: "#f28b8b",
+  };
+  const chartGradient = `conic-gradient(${chartStatuses.map((status, index) => {
+    const start = chartStatuses.slice(0, index).reduce((sum, item) => sum + appointmentStatusCounts[item], 0);
+    const end = start + appointmentStatusCounts[status];
+    const from = appointmentTotal ? (start / appointmentTotal) * 100 : 0;
+    const to = appointmentTotal ? (end / appointmentTotal) * 100 : 0;
+    return `${chartColors[status]} ${from}% ${to}%`;
+  }).join(", ")})`;
 
   return (
-    <main className="dashboard-content animate-fadeUp">
-      <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className="eyebrow">SKINWISE ADMIN</p>
-          <h1 className="font-display text-3xl text-ink">Administration</h1>
-          <p className="mt-1 text-sm text-muted">Manage consultations and dermatologist listings.</p>
-        </div>
-        <button type="button" onClick={() => void loadData()} className="rounded-lg border border-line bg-white px-4 py-2 text-sm text-ink hover:bg-paper">
-          Refresh data
-        </button>
-      </header>
-
-      <nav className="mb-6 flex flex-wrap gap-2" aria-label="Administration sections">
+    <div className="admin-layout">
+      <aside className="admin-sidebar">
+        <a href="/" className="admin-brand" aria-label="SkinWISE home">
+          <span className="admin-brand-mark" aria-hidden="true">✦</span>
+          <span><strong>SkinWISE</strong><small>Smart Skin Health<br />Management</small></span>
+        </a>
+        <nav className="admin-nav" aria-label="Administration sections">
         {sections.map((item) => (
           <button
             key={item.id}
             type="button"
             onClick={() => setSection(item.id)}
             aria-current={section === item.id ? "page" : undefined}
-            className={`rounded-full border px-4 py-2 text-sm transition ${
+            className={`admin-nav-link ${
               section === item.id
-                ? "border-[#4C9BE4] bg-[#E4F0FF] font-semibold text-[#175BB3]"
-                : "border-line bg-white text-muted hover:text-ink"
+                ? "active"
+                : ""
             }`}
           >
-            {item.label}
+            <AdminIcon section={item.id} />{item.label}
           </button>
         ))}
       </nav>
+        <div className="admin-sidebar-foot"><span className="admin-sidebar-orbit" aria-hidden="true">◌</span><p>Healthy Skin<br />Happier You</p><small>SkinWISE © 2026</small></div>
+      </aside>
+
+      <main className="admin-main">
+      <header className="admin-topbar">
+        <div><p className="admin-kicker">SKINWISE ADMIN</p><h1>Admin Dashboard</h1><p>Overview of your SkinWISE platform</p></div>
+        <div className="admin-topbar-tools"><button type="button" onClick={() => void loadData()} className="admin-refresh" aria-label="Refresh administration data">↻</button><UserMenu email={email} fullName={fullName} /></div>
+      </header>
+      <div className="admin-content">
 
       {error && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</p>}
       {notice && <p role="status" className="mb-4 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">{notice}</p>}
@@ -614,24 +758,35 @@ export default function AdminPanel() {
       ) : (
         <>
           {section === "overview" && (
-            <section aria-label="Dashboard overview">
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <section className="admin-overview" aria-label="Dashboard overview">
+              <div className="admin-stat-grid">
                 {[
-                  ["Total users", counts.users],
-                  ["Dermatologists", counts.doctors],
-                  ["Pending appointments", counts.pending],
-                  ["Confirmed appointments", counts.confirmed],
-                ].map(([label, value]) => (
-                  <article key={label} className="rounded-2xl border border-line bg-white p-5 shadow-sm">
-                    <p className="text-sm text-muted">{label}</p>
-                    <p className="mt-2 font-display text-3xl text-ink">{value}</p>
+                  { label: "Total users", value: counts.users, icon: "♙", tone: "violet" },
+                  { label: "Dermatologists", value: counts.doctors, icon: "✚", tone: "blue" },
+                  { label: "Pending appointments", value: counts.pending, icon: "▦", tone: "orange" },
+                  { label: "Open complaints", value: openComplaints ?? "—", icon: "☏", tone: "green" },
+                ].map((stat) => (
+                  <article key={stat.label} className={`admin-stat-card ${stat.tone}`}>
+                    <span className="admin-stat-icon" aria-hidden="true">{stat.icon}</span>
+                    <div><p>{stat.label}</p><strong>{stat.value}</strong></div>
+                    <span className="admin-stat-caption">Current total</span>
                   </article>
                 ))}
               </div>
-              <section className="mt-6 rounded-2xl border border-line bg-white p-5 sm:p-6">
-                <h2 className="font-display text-xl text-ink">Recent appointments</h2>
-                <AppointmentTable appointments={appointments.slice(0, 5)} />
-              </section>
+              <div className="admin-insight-grid">
+                <section className="admin-card admin-appointments-overview">
+                  <div className="admin-card-heading"><h2><AdminIcon section="appointments" />Appointments Overview</h2><button type="button" onClick={() => setSection("appointments")}>View all →</button></div>
+                  {appointmentTotal ? <div className="admin-chart-layout"><div className="admin-donut" style={{ background: chartGradient }} role="img" aria-label={`${appointmentTotal} appointments by status`}><div><strong>{appointmentTotal}</strong><span>Total</span></div></div><ul className="admin-chart-legend">{chartStatuses.filter((status) => appointmentStatusCounts[status] > 0).map((status) => <li key={status}><i style={{ background: chartColors[status] }} />{status}<strong>{appointmentStatusCounts[status]}</strong></li>)}</ul></div> : <p className="admin-empty-chart">No appointment records to summarize.</p>}
+                </section>
+                <section className="admin-card admin-activity-card">
+                  <div className="admin-card-heading"><h2><span aria-hidden="true">▥</span>Recent Activity</h2><span className="admin-data-label">Latest appointment records</span></div>
+                  {appointments.length ? <ul className="admin-activity-list">{appointments.slice(0, 4).map((appointment) => <li key={appointment.id}><span className="admin-activity-icon"><AdminIcon section="appointments" /></span><span className="admin-activity-copy"><strong>{appointment.patient_name || "Patient"} · {appointment.status.replaceAll("_", " ")}</strong><small>{appointment.doctor_name} · {formatDate(appointment.appointment_date)}</small></span><span className={`admin-activity-tag ${appointment.status}`}>Appointment</span></li>)}</ul> : <p className="admin-empty-chart">No recent appointment records.</p>}
+                </section>
+              </div>
+              <div className="admin-bottom-grid">
+                <section className="admin-card admin-recent-table"><div className="admin-card-heading"><h2><AdminIcon section="appointments" />Recent Appointments</h2><button type="button" onClick={() => setSection("appointments")}>View all →</button></div><AppointmentTable appointments={appointments.slice(0, 5)} /></section>
+                <aside className="admin-side-widgets"><section className="admin-system-card"><div className="admin-system-icon">✓</div><div><h2>System Status</h2><p><i />{error || loading ? "Checking data access" : "Admin data loaded"}</p><small>Based on current admin queries</small></div></section><section className="admin-quick-card"><h2>Quick Actions</h2><button type="button" onClick={() => { setSection("doctors"); setEditingDoctor(null); resetDoctorForm(); }}>＋ Add dermatologist</button><button type="button" onClick={() => setSection("appointments")}>▦ Manage appointments</button><button type="button" onClick={() => setSection("complaints")}>☏ View complaints</button></section></aside>
+              </div>
             </section>
           )}
 
@@ -674,71 +829,141 @@ export default function AdminPanel() {
                 <label className="text-sm text-ink">Specialization<input required value={doctorForm.specialization} onChange={(event) => setDoctorForm({ ...doctorForm, specialization: event.target.value })} className="mt-1 w-full rounded-lg border border-line px-3 py-2" /></label>
                 <label className="text-sm text-ink">Experience (years)<input required type="number" min="0" step="1" value={doctorForm.experience} onChange={(event) => setDoctorForm({ ...doctorForm, experience: event.target.value })} className="mt-1 w-full rounded-lg border border-line px-3 py-2" /></label>
                 <label className="text-sm text-ink">Bio<textarea rows={3} value={doctorForm.bio} onChange={(event) => setDoctorForm({ ...doctorForm, bio: event.target.value })} className="mt-1 w-full rounded-lg border border-line px-3 py-2" /></label>
-                <label className="text-sm text-ink">Profile image URL<input type="url" value={doctorForm.image_url} onChange={(event) => setDoctorForm({ ...doctorForm, image_url: event.target.value })} className="mt-1 w-full rounded-lg border border-line px-3 py-2" /></label>
+                <div className="text-sm text-ink">
+                  <span>Profile image</span>
+                  <div className="mt-1 flex items-center gap-3 rounded-xl border border-line p-3">
+                    {(doctorImagePreview || doctorForm.image_url) ? (
+                      <img src={doctorImagePreview || doctorForm.image_url} alt="Dermatologist profile preview" className="h-16 w-16 rounded-full object-cover" />
+                    ) : (
+                      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#E4F0FF] text-xl font-semibold text-[#175BB3]" aria-hidden="true">{doctorForm.name.slice(0, 1).toUpperCase() || "?"}</div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs text-muted">{doctorImageFile?.name || (doctorForm.image_url ? "Current profile image" : "No image selected")}</p>
+                      <input
+                        ref={doctorImageInputRef}
+                        type="file"
+                        accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                        className="sr-only"
+                        aria-label="Choose dermatologist profile image"
+                        onChange={(event) => selectDoctorImage(event.target.files?.[0])}
+                      />
+                      <div className="mt-2 flex gap-2">
+                        <button type="button" disabled={saving || uploadingDoctorImage} onClick={() => doctorImageInputRef.current?.click()} className="rounded-lg border border-line px-3 py-1.5 text-xs font-medium text-ink hover:bg-paper disabled:opacity-60">{doctorForm.image_url || doctorImageFile ? "Change image" : "Choose image"}</button>
+                        {(doctorForm.image_url || doctorImageFile) && <button type="button" disabled={saving || uploadingDoctorImage} onClick={clearDoctorImage} className="rounded-lg border border-line px-3 py-1.5 text-xs text-muted hover:bg-paper disabled:opacity-60">Remove</button>}
+                      </div>
+                    </div>
+                  </div>
+                  <p className="mt-1 text-xs text-muted">JPG, PNG, or WebP; maximum 5 MB.</p>
+                  {doctorImageError && <p role="alert" className="mt-1 text-xs text-red-700">{doctorImageError}</p>}
+                </div>
                 <label className="text-sm text-ink">Available days (comma separated)<input placeholder="Monday, Wednesday, Friday" value={doctorForm.available_days} onChange={(event) => setDoctorForm({ ...doctorForm, available_days: event.target.value })} className="mt-1 w-full rounded-lg border border-line px-3 py-2" /></label>
                 <label className="text-sm text-ink">Available time (PKT)<input placeholder="10:00 AM – 2:00 PM" value={doctorForm.available_time} onChange={(event) => setDoctorForm({ ...doctorForm, available_time: event.target.value })} className="mt-1 w-full rounded-lg border border-line px-3 py-2" /></label>
                 <label className="text-sm text-ink">Consultation fee (optional)<input type="number" min="0" step="0.01" value={doctorForm.consultation_fee} onChange={(event) => setDoctorForm({ ...doctorForm, consultation_fee: event.target.value })} className="mt-1 w-full rounded-lg border border-line px-3 py-2" /></label>
                 <label className="flex items-center gap-2 text-sm text-ink"><input type="checkbox" checked={doctorForm.is_verified} onChange={(event) => setDoctorForm({ ...doctorForm, is_verified: event.target.checked })} />Verified dermatologist</label>
                 <div className="flex gap-2">
-                  <button disabled={saving} className="rounded-lg bg-ink px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
-                    {saving ? "Saving…" : editingDoctor ? "Save changes" : "Add dermatologist"}
+                  <button disabled={saving || uploadingDoctorImage} className="rounded-lg bg-ink px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
+                    {uploadingDoctorImage ? "Uploading image…" : saving ? "Saving…" : editingDoctor ? "Save changes" : "Add dermatologist"}
                   </button>
-                  {editingDoctor && <button type="button" onClick={() => { setEditingDoctor(null); setDoctorForm(EMPTY_DOCTOR); }} className="rounded-lg border border-line px-4 py-2 text-sm text-ink">Cancel edit</button>}
+                  {editingDoctor && <button type="button" onClick={() => { setEditingDoctor(null); resetDoctorForm(); }} className="rounded-lg border border-line px-4 py-2 text-sm text-ink">Cancel edit</button>}
                 </div>
               </form>
             </section>
           )}
 
           {section === "appointments" && (
-            <section className="rounded-2xl border border-line bg-white p-5 sm:p-6">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <h2 className="font-display text-xl text-ink">Appointment management</h2>
-                <label className="text-sm text-muted">
-                  Status{" "}
-                  <select value={appointmentFilter} onChange={(event) => setAppointmentFilter(event.target.value as "all" | AppointmentStatus)} className="rounded-lg border border-line bg-white px-3 py-2 text-ink">
-                    <option value="all">All</option>
-                    {statuses.map((status) => <option key={status} value={status}>{status}</option>)}
+            <section className="rounded-2xl border border-[#E2E8F0] bg-white p-4 shadow-sm sm:p-6">
+              <div className="flex flex-col gap-4 border-b border-[#E8EDF3] pb-5 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#64748B]">Care coordination</p>
+                  <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight text-[#182B49]">Appointments</h2>
+                  <p className="mt-1 text-sm text-[#64748B]">Review requests and manage consultation status.</p>
+                </div>
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+                  <label className="sr-only" htmlFor="admin-appointment-search">Search appointments</label>
+                  <input id="admin-appointment-search" type="search" value={appointmentSearch} onChange={(event) => setAppointmentSearch(event.target.value)} placeholder="Search patient, doctor, or ID" className="min-h-10 min-w-0 rounded-lg border border-[#D8E0EA] bg-white px-3 text-sm text-[#243449] outline-none transition focus:border-[#0D9488] focus:ring-2 focus:ring-[#0D9488]/15 sm:w-64" />
+                  <label className="sr-only" htmlFor="admin-appointment-status">Filter by status</label>
+                  <select id="admin-appointment-status" value={appointmentFilter} onChange={(event) => setAppointmentFilter(event.target.value as "all" | AppointmentStatus)} className="min-h-10 rounded-lg border border-[#D8E0EA] bg-white px-3 text-sm text-[#243449] outline-none focus:border-[#0D9488] focus:ring-2 focus:ring-[#0D9488]/15">
+                    <option value="all">All statuses</option>
+                    {statuses.map((status) => <option key={status} value={status}>{status.charAt(0).toUpperCase() + status.slice(1)}</option>)}
                   </select>
-                </label>
+                </div>
               </div>
-              <div className="mt-4 grid gap-3">
-                {filteredAppointments.length === 0 && <p className="text-sm text-muted">No appointments in this view.</p>}
-                {filteredAppointments.map((appointment) => (
-                  <article key={appointment.id} className="rounded-xl border border-line p-4">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <p className="font-medium text-ink">{appointment.patient_name || "Patient"} with {appointment.doctor_name || "Dermatologist"}</p>
-                        <p className="mt-1 text-sm text-muted">{formatDate(appointment.appointment_date)} at {formatTime(appointment.appointment_time)}</p>
-                        {appointment.patient_message && <p className="mt-2 text-sm text-ink/80">Message: {appointment.patient_message}</p>}
+
+              <div className="mt-5 flex flex-wrap gap-2" role="group" aria-label="Appointment archive view">
+                {(["active", "archived"] as const).map((view) => {
+                  const count = appointments.filter((appointment) => view === "archived" ? Boolean(appointment.admin_archived_at) : !appointment.admin_archived_at).length;
+                  const selected = appointmentArchiveFilter === view;
+                  return <button key={view} type="button" aria-pressed={selected} onClick={() => setAppointmentArchiveFilter(view)} className={`inline-flex min-h-9 items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition ${selected ? "bg-[#E8F4F3] text-[#087E75]" : "text-[#64748B] hover:bg-[#F4F7FA] hover:text-[#243449]"}`}>
+                    {view === "active" ? "Active appointments" : "Archived"}
+                    <span className={`rounded-full px-2 py-0.5 text-xs ${selected ? "bg-white text-[#087E75]" : "bg-[#EEF2F6] text-[#64748B]"}`}>{count}</span>
+                  </button>;
+                })}
+              </div>
+
+              {loading ? (
+                <p className="mt-5 rounded-xl border border-dashed border-[#D8E0EA] bg-[#F8FAFC] px-4 py-8 text-center text-sm text-[#64748B]">Loading appointments…</p>
+              ) : filteredAppointments.length === 0 ? (
+                <div className="mt-5 rounded-xl border border-dashed border-[#D8E0EA] bg-[#F8FAFC] px-4 py-10 text-center">
+                  <p className="text-sm font-semibold text-[#334155]">No appointments found</p>
+                  <p className="mt-1 text-sm text-[#64748B]">Try changing the status filter or search terms.</p>
+                </div>
+              ) : (
+                <div className="mt-5 grid gap-3">
+                  {filteredAppointments.map((appointment) => (
+                    <article key={appointment.id} className="rounded-xl border border-[#E2E8F0] bg-white p-4 transition hover:border-[#C7D6E5] hover:shadow-sm sm:p-5">
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="font-semibold text-[#1E3354]">{appointment.patient_name || "Patient"}</h3>
+                            <span className="text-xs text-[#94A3B8]" aria-hidden="true">with</span>
+                            <span className="text-sm font-medium text-[#475569]">{appointment.doctor_name || "Dermatologist"}</span>
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[#64748B]">
+                            <span className="font-medium text-[#334155]">{formatDate(appointment.appointment_date)}</span>
+                            <span>{formatTime(appointment.appointment_time)}</span>
+                            <span className="text-xs text-[#94A3B8]">ID {appointment.id.slice(0, 8)}</span>
+                          </div>
+                          {appointment.patient_message && <p className="mt-3 rounded-lg bg-[#F7F9FC] px-3 py-2.5 text-sm leading-5 text-[#526176]"><span className="font-semibold text-[#334155]">Patient note: </span>{appointment.patient_message}</p>}
+                        </div>
+                        <span className={`inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold capitalize ${statusStyle(appointment.status)}`}>
+                          <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />{appointment.status}
+                        </span>
                       </div>
-                      <span className={`rounded-full px-3 py-1 text-xs capitalize ${statusStyle(appointment.status)}`}>{appointment.status}</span>
+                      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[#EEF2F6] pt-3">
+                        {appointment.admin_archived_at ? (
+                          <button type="button" disabled={appointmentActionId === appointment.id} onClick={() => void setAppointmentArchived(appointment, false)} className="inline-flex min-h-9 items-center rounded-lg border border-[#C8DAD7] bg-white px-3 py-2 text-xs font-semibold text-[#087E75] transition hover:bg-[#F0F8F7] disabled:cursor-wait disabled:opacity-60">{appointmentActionId === appointment.id ? "Restoring…" : "Restore appointment"}</button>
+                        ) : (
+                          <>
+                            {appointment.status === "pending" && <>
+                              <button type="button" onClick={() => void updateAppointment(appointment, { status: "confirmed" })} className="inline-flex min-h-9 items-center rounded-lg bg-[#E8F4EC] px-3 py-2 text-xs font-semibold text-[#33734B] transition hover:bg-[#D9EBDD]">Accept request</button>
+                              <button type="button" onClick={() => void updateAppointment(appointment, { status: "rejected" })} className="inline-flex min-h-9 items-center rounded-lg bg-[#FFF1F0] px-3 py-2 text-xs font-semibold text-[#A5404A] transition hover:bg-[#FCE2E0]">Reject</button>
+                            </>}
+                            {appointment.status === "confirmed" && <>
+                              <button type="button" onClick={() => void updateAppointment(appointment, { status: "completed" })} className="inline-flex min-h-9 items-center rounded-lg border border-[#D8E0EA] bg-white px-3 py-2 text-xs font-semibold text-[#334155] transition hover:bg-[#F7F9FC]">Mark completed</button>
+                              <button type="button" onClick={() => void updateAppointment(appointment, { status: "cancelled" })} className="inline-flex min-h-9 items-center rounded-lg border border-[#E8D7D7] bg-white px-3 py-2 text-xs font-semibold text-[#A5404A] transition hover:bg-[#FFF7F6]">Cancel</button>
+                            </>}
+                            <button type="button" onClick={() => setAppointmentToArchive(appointment)} className="ml-auto inline-flex min-h-9 items-center rounded-lg border border-[#D8E0EA] bg-white px-3 py-2 text-xs font-semibold text-[#64748B] transition hover:border-[#AAB8C8] hover:bg-[#F7F9FC] hover:text-[#334155]">Archive</button>
+                          </>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+
+              {appointmentToArchive && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setAppointmentToArchive(null); }}>
+                  <section role="alertdialog" aria-modal="true" aria-labelledby="archive-appointment-title" aria-describedby="archive-appointment-description" className="w-full max-w-md rounded-2xl border border-white/70 bg-white p-5 shadow-2xl sm:p-6">
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#64748B]">Confirm archive</p>
+                    <h3 id="archive-appointment-title" className="mt-2 text-lg font-semibold text-[#1E3354]">Archive this appointment?</h3>
+                    <p id="archive-appointment-description" className="mt-2 text-sm leading-6 text-[#64748B]">This hides the appointment from the active admin list. Its history and related records are preserved, and you can restore it later.</p>
+                    <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                      <button type="button" disabled={appointmentActionId === appointmentToArchive.id} onClick={() => setAppointmentToArchive(null)} className="min-h-10 rounded-lg border border-[#D8E0EA] px-4 py-2 text-sm font-medium text-[#475569] hover:bg-[#F7F9FC] disabled:opacity-60">Keep appointment</button>
+                      <button type="button" disabled={appointmentActionId === appointmentToArchive.id} onClick={() => void setAppointmentArchived(appointmentToArchive, true)} className="min-h-10 rounded-lg bg-[#A5404A] px-4 py-2 text-sm font-semibold text-white hover:bg-[#8F3540] disabled:cursor-wait disabled:opacity-60">{appointmentActionId === appointmentToArchive.id ? "Archiving…" : "Archive appointment"}</button>
                     </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {appointment.status === "pending" && (
-                        <>
-                          <button type="button" onClick={() => void updateAppointment(appointment, { status: "confirmed" })} className="rounded-lg bg-[#E7F2EA] px-3 py-2 text-xs font-medium text-[#3E7750]">Accept</button>
-                          <button type="button" onClick={() => void updateAppointment(appointment, { status: "rejected" })} className="rounded-lg bg-[#F9E8E9] px-3 py-2 text-xs font-medium text-[#A5404A]">Reject</button>
-                        </>
-                      )}
-                      {appointment.status === "confirmed" && (
-                        <>
-                          <input
-                            aria-label="Online meeting link"
-                            type="url"
-                            placeholder="https://meeting.example.com/..."
-                            value={meetingLinks[appointment.id] ?? ""}
-                            onChange={(event) => setMeetingLinks({ ...meetingLinks, [appointment.id]: event.target.value })}
-                            className="min-w-[220px] flex-1 rounded-lg border border-line px-3 py-2 text-sm"
-                          />
-                          <button type="button" onClick={() => void updateAppointment(appointment, { meeting_link: meetingLinks[appointment.id]?.trim() || null })} className="rounded-lg border border-line px-3 py-2 text-xs text-ink">Save link</button>
-                          <button type="button" onClick={() => void updateAppointment(appointment, { status: "completed" })} className="rounded-lg border border-line px-3 py-2 text-xs text-ink">Mark completed</button>
-                          <button type="button" onClick={() => void updateAppointment(appointment, { status: "cancelled" })} className="rounded-lg border border-line px-3 py-2 text-xs text-ink">Cancel</button>
-                        </>
-                      )}
-                    </div>
-                  </article>
-                ))}
-              </div>
+                  </section>
+                </div>
+              )}
             </section>
           )}
 
@@ -1061,26 +1286,20 @@ export default function AdminPanel() {
           )}
         </>
       )}
-    </main>
+      </div>
+      </main>
+    </div>
   );
 }
 
 function AppointmentTable({ appointments }: { appointments: Appointment[] }) {
   if (!appointments.length) {
-    return <p className="mt-4 text-sm text-muted">No appointments have been requested yet.</p>;
+    return <p className="admin-table-empty">No appointments have been requested yet.</p>;
   }
 
   return (
-    <div className="mt-4 grid gap-3">
-      {appointments.map((appointment) => (
-        <article key={appointment.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line px-4 py-3">
-          <div>
-            <p className="text-sm font-medium text-ink">{appointment.patient_name || "Patient"} · {appointment.doctor_name || "Dermatologist"}</p>
-            <p className="mt-1 text-xs text-muted">{formatDate(appointment.appointment_date)} at {formatTime(appointment.appointment_time)}</p>
-          </div>
-          <span className={`rounded-full px-3 py-1 text-xs capitalize ${statusStyle(appointment.status)}`}>{appointment.status}</span>
-        </article>
-      ))}
-    </div>
+    <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Patient</th><th>Dermatologist</th><th>Date &amp; time</th><th>Status</th></tr></thead><tbody>
+      {appointments.map((appointment) => <tr key={appointment.id}><td><span className="admin-patient-cell"><i>{(appointment.patient_name || "P").slice(0, 1).toUpperCase()}</i>{appointment.patient_name || "Patient"}</span></td><td>{appointment.doctor_name || "Dermatologist"}</td><td>{formatDate(appointment.appointment_date)} · {formatTime(appointment.appointment_time)}</td><td><span className={`admin-table-status ${appointment.status}`}>{appointment.status}</span></td></tr>)}
+    </tbody></table></div>
   );
 }

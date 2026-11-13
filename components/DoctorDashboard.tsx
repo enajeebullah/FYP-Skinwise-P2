@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
 import AppointmentChat from "@/components/AppointmentChat";
 import CallCenter from "@/components/CallCenter";
@@ -9,18 +9,35 @@ type AppointmentStatus = "pending" | "confirmed" | "completed" | "cancelled" | "
 
 interface Appointment {
   id: string;
+  patient_id: string;
   appointment_date: string;
   appointment_time: string;
   patient_message: string;
   status: AppointmentStatus;
-  meeting_link: string | null;
   created_at: string;
   archived_at: string | null;
 }
 
+interface AppointmentPatientDetails {
+  appointment_id: string;
+  patient_full_name: string | null;
+  patient_age: number | null;
+  patient_gender: string | null;
+}
+
 type ConsultationPaymentStatus = "pending" | "simulated_paid" | "failed" | "simulated_refunded";
 
-type PortalView = "dashboard" | "today" | "next" | "upcoming" | "history";
+type PortalView = "dashboard" | "today" | "next" | "upcoming" | "history" | "chat";
+
+interface DoctorProfile {
+  name: string;
+  specialization: string | null;
+  experience: number | null;
+  qualification: string | null;
+  image_url: string | null;
+  is_active: boolean;
+  consultation_fee: number | null;
+}
 
 interface ConsultationPayment {
   appointment_id: string;
@@ -104,13 +121,38 @@ function pakistanToday() {
   }).format(new Date());
 }
 
-function isValidMeetingLink(value: string) {
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" || url.protocol === "http:";
-  } catch {
-    return false;
-  }
+function formatCreatedAt(value: string) {
+  return new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+type IconName = "dashboard" | "today" | "next" | "upcoming" | "history" | "patients" | "messages" | "chat" | "calendar" | "availability" | "profile" | "settings" | "logout" | "search" | "bell" | "refresh" | "check" | "clock" | "doctor" | "fee" | "arrow" | "activity";
+
+function DoctorIcon({ name, className = "" }: { name: IconName; className?: string }) {
+  const paths: Record<IconName, ReactNode> = {
+    dashboard: <><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="5" rx="1.5" /><rect x="14" y="12" width="7" height="9" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /></>,
+    today: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18M8 14h3M8 17h6" /></>,
+    next: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+    upcoming: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18M8 14h3M8 17h6" /></>,
+    history: <><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8" /><path d="M3 3v5h5M12 7v5l3 2" /></>,
+    patients: <><circle cx="9" cy="8" r="3" /><path d="M3 20c.5-3.5 2.5-5 6-5s5.5 1.5 6 5M16 5a3 3 0 0 1 0 6M17 15c2.5.3 3.7 1.8 4 4" /></>,
+    messages: <><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H7l-3 2v-5.5a7.5 7.5 0 1 1 16-4Z" /><path d="M8 10h8M8 14h5" /></>,
+    chat: <><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H7l-3 2v-5.5a7.5 7.5 0 1 1 16-4Z" /><path d="M8 10h.01M12 10h.01M16 10h.01" /></>,
+    calendar: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></>,
+    availability: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2M19 5l2-2" /></>,
+    profile: <><circle cx="12" cy="8" r="4" /><path d="M4 21c.7-4 3.3-6 8-6s7.3 2 8 6" /></>,
+    settings: <><circle cx="12" cy="12" r="3" /><path d="m19.4 15 .1.1 1.4 1.1-1.4 2.4-1.7-.6a8 8 0 0 1-1.7 1l-.3 1.8h-2.8l-.3-1.8a8 8 0 0 1-1.7-1l-1.7.6-1.4-2.4L7 15a8 8 0 0 1 0-2l-1.4-1.1L7 9.5l1.7.6a8 8 0 0 1 1.7-1l.3-1.8h2.8l.3 1.8a8 8 0 0 1 1.7 1l1.7-.6 1.4 2.4L19.5 13a8 8 0 0 1-.1 2Z" /></>,
+    logout: <><path d="M10 17l5-5-5-5M15 12H3" /><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6" /></>,
+    search: <><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 5 5" /></>,
+    bell: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></>,
+    refresh: <><path d="M20 7v5h-5M4 17v-5h5" /><path d="M5.6 9A7 7 0 0 1 18 6l2 2M4 16l2 2a7 7 0 0 0 12.4-3" /></>,
+    check: <><circle cx="12" cy="12" r="9" /><path d="m8 12 2.5 2.5L16 9" /></>,
+    clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+    doctor: <><path d="M8 3v5a4 4 0 0 0 8 0V3M6 3h4M14 3h4M12 12v2a4 4 0 0 0 8 0v-1" /><circle cx="20" cy="11" r="1.5" /></>,
+    fee: <><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></>,
+    arrow: <><path d="M5 12h14M13 6l6 6-6 6" /></>,
+    activity: <><path d="M3 12h4l3-8 4 16 3-8h4" /></>,
+  };
+  return <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
 export default function DoctorDashboard({
@@ -123,11 +165,14 @@ export default function DoctorDashboard({
   const [view, setView] = useState<"active" | "archived">("active");
   const [portalView, setPortalView] = useState<PortalView>("dashboard");
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [archivedAppointments, setArchivedAppointments] = useState<Appointment[]>([]);
+  const [doctorProfile, setDoctorProfile] = useState<DoctorProfile | null>(null);
+  const [patientDetails, setPatientDetails] = useState<Record<string, AppointmentPatientDetails>>({});
+  const [patientDetailsError, setPatientDetailsError] = useState<string | null>(null);
   const [activeAppointments, setActiveAppointments] = useState<Appointment[]>([]);
   const [payments, setPayments] = useState<ConsultationPayment[]>([]);
   const [consultationFee, setConsultationFee] = useState<number | null>(null);
   const [openChatAppointmentId, setOpenChatAppointmentId] = useState<string | null>(null);
-  const [meetingLinks, setMeetingLinks] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [paymentLoading, setPaymentLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -138,8 +183,7 @@ export default function DoctorDashboard({
   const [notice, setNotice] = useState<string | null>(null);
   const [appointmentSearch, setAppointmentSearch] = useState("");
   const [appointmentFilter, setAppointmentFilter] = useState<"all" | AppointmentStatus>("all");
-  const [archiveTarget, setArchiveTarget] = useState<Appointment | null>(null);
-  const [archivingId, setArchivingId] = useState<string | null>(null);
+  const [expandedAppointmentId, setExpandedAppointmentId] = useState<string | null>(null);
 
   const loadAppointments = useCallback(async () => {
     setLoading(true);
@@ -155,14 +199,14 @@ export default function DoctorDashboard({
     ] = await Promise.all([
       supabase
         .from("appointments")
-        .select("id, appointment_date, appointment_time, patient_message, status, meeting_link, created_at, archived_at")
+        .select("id, patient_id, appointment_date, appointment_time, patient_message, status, created_at, archived_at")
         .eq("doctor_id", doctorId)
         .is("archived_at", null)
         .order("appointment_date", { ascending: true })
         .order("appointment_time", { ascending: true }),
       supabase
         .from("appointments")
-        .select("id, appointment_date, appointment_time, patient_message, status, meeting_link, created_at, archived_at")
+        .select("id, patient_id, appointment_date, appointment_time, patient_message, status, created_at, archived_at")
         .eq("doctor_id", doctorId)
         .not("archived_at", "is", null)
         .order("archived_at", { ascending: false })
@@ -170,7 +214,7 @@ export default function DoctorDashboard({
         .order("appointment_time", { ascending: false }),
       supabase
         .from("doctors")
-        .select("consultation_fee")
+        .select("name, specialization, experience, qualification, image_url, is_active, consultation_fee")
         .eq("id", doctorId)
         .maybeSingle(),
     ]);
@@ -188,35 +232,48 @@ export default function DoctorDashboard({
     const activeRows = (activeData ?? []) as Appointment[];
     const archivedRows = (archivedData ?? []) as Appointment[];
     setActiveAppointments(activeRows);
+    setArchivedAppointments(archivedRows);
     setArchivedLoadError(archivedError ? `Could not load archived appointments: ${archivedError.message}` : null);
     const rows = view === "active" ? activeRows : archivedRows;
     setAppointments(rows);
-    setMeetingLinks(Object.fromEntries(rows.map((appointment) => [
-      appointment.id,
-      appointment.meeting_link ?? "",
-    ])));
     if (doctorError) {
       setFeeError(`Could not load your consultation fee: ${doctorError.message}`);
       setConsultationFee(null);
+      setDoctorProfile(null);
     } else {
       const fee = doctorData?.consultation_fee;
       setConsultationFee(typeof fee === "number" && Number.isFinite(fee) && fee >= 0 ? fee : null);
+      setDoctorProfile(doctorData as DoctorProfile | null);
     }
 
     if (rows.length === 0) {
       setPayments([]);
+      setPatientDetails({});
+      setPatientDetailsError(null);
       setPaymentLoading(false);
     } else {
-      const { data: paymentData, error: paymentsFailure } = await supabase.rpc(
-        "get_doctor_consultation_payment_status",
-        { p_appointment_ids: rows.map((appointment) => appointment.id) }
-      );
+      const appointmentIds = rows.map((appointment) => appointment.id);
+      const [
+        { data: paymentData, error: paymentsFailure },
+        { data: patientData, error: patientDataFailure },
+      ] = await Promise.all([
+        supabase.rpc("get_doctor_consultation_payment_status", { p_appointment_ids: appointmentIds }),
+        supabase.rpc("get_doctor_appointment_patient_details", { p_appointment_ids: appointmentIds }),
+      ]);
 
       if (paymentsFailure) {
         setPaymentError(`Could not load payment status: ${paymentsFailure.message}`);
         setPayments([]);
       } else {
         setPayments((paymentData ?? []) as ConsultationPayment[]);
+      }
+      if (patientDataFailure) {
+        setPatientDetails({});
+        setPatientDetailsError(`Could not load patient information: ${patientDataFailure.message}`);
+      } else {
+        const details = (patientData ?? []) as AppointmentPatientDetails[];
+        setPatientDetails(Object.fromEntries(details.map((item) => [item.appointment_id, item])));
+        setPatientDetailsError(null);
       }
       setPaymentLoading(false);
     }
@@ -230,6 +287,11 @@ export default function DoctorDashboard({
   const todayAppointments = activeAppointments.filter(
     (appointment) => appointment.appointment_date === pakistanToday()
   );
+  const recentAppointmentRows = [...activeAppointments].sort(
+    (first, second) => Date.parse(second.created_at) - Date.parse(first.created_at)
+  );
+  const completedAppointmentCount = [...activeAppointments, ...archivedAppointments]
+    .filter((appointment) => appointment.status === "completed").length;
   const futureAppointments = activeAppointments.filter(
     (appointment) => appointment.status === "confirmed" && isUpcoming(appointment)
   );
@@ -240,11 +302,22 @@ export default function DoctorDashboard({
       ? (nextAppointment ? [nextAppointment] : [])
       : portalView === "upcoming"
         ? futureAppointments
-        : appointments;
+        : portalView === "history"
+          ? archivedAppointments
+          : portalView === "chat"
+            ? activeAppointments.filter((appointment) => appointment.status === "confirmed" || appointment.status === "completed")
+            : recentAppointmentRows;
+
+  const appointmentPatientName = (appointment: Appointment) =>
+    patientDetails[appointment.id]?.patient_full_name?.trim() || "Patient";
+  const totalPatients = new Set([...activeAppointments, ...archivedAppointments].map((appointment) => appointment.patient_id)).size;
 
   const visibleAppointments = portalAppointments.filter((appointment) => {
     const query = appointmentSearch.trim().toLowerCase();
     const matchesSearch = !query || [
+      appointmentPatientName(appointment),
+      appointment.patient_id,
+      appointment.id,
       appointment.patient_message,
       appointment.status,
       formatDate(appointment.appointment_date),
@@ -262,15 +335,9 @@ export default function DoctorDashboard({
 
   async function updateAppointment(appointment: Appointment, updates: {
     status?: "confirmed" | "rejected";
-    meeting_link?: string | null;
   }) {
     setError(null);
     setNotice(null);
-
-    if (updates.meeting_link && !isValidMeetingLink(updates.meeting_link)) {
-      setError("Enter a valid HTTP or HTTPS consultation link.");
-      return;
-    }
 
     if (savingId !== null) return;
     setSavingId(appointment.id);
@@ -316,42 +383,12 @@ export default function DoctorDashboard({
     setSavingId(null);
   }
 
-  async function archiveAppointment() {
-    if (!archiveTarget || archivingId !== null) return;
-
-    setArchivingId(archiveTarget.id);
-    setError(null);
-    setNotice(null);
-
-    const { data, error: archiveError } = await createClient().rpc(
-      "archive_appointment_for_doctor",
-      { p_appointment_id: archiveTarget.id }
-    );
-
-    if (archiveError) {
-      setError(`Could not archive this consultation: ${archiveError.message}`);
-      setArchivingId(null);
-      return;
-    }
-
-    if (data !== true) {
-      setError("This consultation could not be archived. It may already be archived or you may not be authorized to archive it.");
-      setArchivingId(null);
-      return;
-    }
-
-    const archivedDate = formatDate(archiveTarget.appointment_date);
-    const archivedTime = formatTime(archiveTarget.appointment_time);
-    setArchiveTarget(null);
-    setNotice(`Consultation from ${archivedDate} at ${archivedTime} was archived.`);
-    await loadAppointments();
-    setArchivingId(null);
-  }
+  const chatAppointments = activeAppointments.filter((appointment) => appointment.status === "confirmed" || appointment.status === "completed");
 
   return (
   <main className="doctor-portal min-h-screen bg-[#F3F7FB] lg:flex">
     <CallCenter />
-    <aside className="flex w-full shrink-0 flex-col bg-[#142B49] text-white lg:sticky lg:top-0 lg:h-screen lg:w-64">
+    <aside className="doctor-sidebar flex w-full shrink-0 flex-col text-white lg:sticky lg:top-0 lg:h-screen lg:w-64">
       <div className="flex items-center gap-3 border-b border-white/10 px-5 py-5 lg:px-6">
         <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#0D9488]/20 text-lg font-semibold text-[#7DD3CA]" aria-hidden="true">✦</span>
         <div>
@@ -368,11 +405,11 @@ export default function DoctorDashboard({
           <p className="text-xs text-[#B8C9DB]">Dermatologist</p>
         </div>
       </div>
-      <nav aria-label="Doctor portal navigation" className="flex gap-1 overflow-x-auto px-3 py-3 lg:block lg:flex-1 lg:space-y-1 lg:overflow-y-auto lg:px-4 lg:py-5">
+      <nav aria-label="Doctor portal navigation" className="doctor-sidebar-nav flex gap-1 overflow-x-auto px-3 py-3 lg:block lg:flex-1 lg:space-y-1 lg:overflow-y-auto lg:px-4 lg:py-5">
         {[
           ["dashboard", "Dashboard", "⌂"],
           ["today", "Today's Appointments", "▦"],
-          ["next", "Next Appointment", "→"],
+          ["next", "Next Appointments", "→"],
           ["upcoming", "Upcoming Appointments", "◷"],
           ["history", "Appointment History", "↺"],
         ].map(([key, label, icon]) => (
@@ -383,14 +420,18 @@ export default function DoctorDashboard({
             onClick={() => selectPortalView(key as PortalView)}
             className={`flex min-h-10 shrink-0 items-center gap-3 rounded-lg px-3 text-left text-xs font-semibold transition lg:w-full lg:text-sm ${portalView === key ? "bg-[#0D9488] text-white shadow-sm" : "text-[#D7E3EF] hover:bg-white/10 hover:text-white"}`}
           >
-            <span className="w-5 text-center text-base" aria-hidden="true">{icon}</span>
+            <DoctorIcon className="doctor-nav-icon" name={key as IconName} />
             <span>{label}</span>
           </button>
         ))}
+        <button type="button" aria-current={portalView === "chat" ? "page" : undefined} onClick={() => selectPortalView("chat")} className={`doctor-nav-link ${portalView === "chat" ? "active" : ""}`}><DoctorIcon name="chat" /><span>Chat</span></button>
         <div className="flex gap-1 border-t border-white/10 pt-3 lg:block lg:space-y-1 lg:pt-4">
-          {["Patients", "Messages", "Calendar", "Manage Availability", "Profile", "Settings"].map((label) => (
-            <button key={label} type="button" disabled className="flex min-h-10 shrink-0 items-center gap-3 rounded-lg px-3 text-left text-xs font-medium text-[#91A7BF] opacity-80 lg:w-full lg:text-sm">
-              <span className="w-5 text-center text-base" aria-hidden="true">•</span>
+          {[
+            ["Patients", "patients"], ["Messages", "messages"], ["Calendar", "calendar"],
+            ["Manage Availability", "availability"], ["Profile", "profile"], ["Settings", "settings"],
+          ].map(([label, icon]) => (
+            <button key={label} type="button" disabled className="doctor-nav-link soon">
+              <DoctorIcon name={icon as IconName} className="doctor-nav-icon" />
               <span>{label}</span>
               <span className="ml-auto text-[9px] uppercase tracking-wide">Soon</span>
             </button>
@@ -411,24 +452,10 @@ export default function DoctorDashboard({
       </form>
     </aside>
     <div className={`min-w-0 flex-1 px-3 py-4 sm:px-6 sm:py-7 ${openChatAppointmentId ? "lg:px-7" : "lg:px-8"}`}>
-      <div className="mx-auto max-w-[1440px]">
-      <header className="mb-6 overflow-hidden rounded-2xl border border-[#DCE5EF] bg-white shadow-[0_12px_35px_rgba(20,43,73,0.08)]">
-        <div className="flex flex-col gap-5 bg-gradient-to-br from-white via-white to-[#F3F7FB] p-5 sm:flex-row sm:items-center sm:justify-between sm:p-7">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#0D9488]">SkinWISE · Doctor portal</p>
-            <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-[#142B49] sm:text-4xl">Doctor Dashboard</h1>
-            <p className="mt-2 text-sm text-[#64748B]">Manage appointments and patient consultations in one place.</p>
-          </div>
-          <div className="flex items-center gap-3 rounded-xl border border-[#D9E7F6] bg-white/80 px-4 py-3 shadow-sm">
-            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#D8F3EF] text-sm font-bold text-[#0F766E]" aria-hidden="true">
-              {doctorName.slice(0, 1).toUpperCase()}
-            </span>
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-[#64748B]">Signed in as</p>
-              <p className="mt-0.5 text-sm font-semibold text-[#142B49]">{doctorName}</p>
-            </div>
-          </div>
-        </div>
+      <div className="doctor-main-inner">
+      <header className="doctor-topbar">
+        <label className="doctor-search"><DoctorIcon name="search" /><span className="sr-only">Search patients or appointments</span><input value={appointmentSearch} onChange={(event) => setAppointmentSearch(event.target.value)} placeholder="Search patients or appointments..." /></label>
+        <div className="doctor-header-actions"><button type="button" onClick={() => void loadAppointments()} aria-label="Refresh dashboard data"><DoctorIcon name="refresh" /></button><div className="doctor-header-profile">{doctorProfile?.image_url ? <img src={doctorProfile.image_url} alt="" /> : <span className="doctor-avatar">{doctorName.slice(0, 1).toUpperCase()}</span>}<span><strong>{doctorProfile?.name || doctorName}</strong><small>{doctorProfile?.specialization || "Dermatologist"}</small></span></div></div>
       </header>
 
       {error && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</p>}
@@ -436,7 +463,18 @@ export default function DoctorDashboard({
       {notice && <p role="status" className="mb-4 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">{notice}</p>}
 
       {portalView === "dashboard" && (
-        <section aria-label="Today's overview" className="mb-7 grid gap-4 xl:grid-cols-[1.15fr_.85fr]">
+        <>
+        <section className="doctor-welcome mb-4"><div><p>Your SkinWISE practice</p><h1>Welcome back, {doctorProfile?.name || doctorName}</h1><span>Manage appointments and continue consultations with your patients.</span></div><DoctorIcon name="doctor" /></section>
+        <section aria-label="Appointment statistics" className="doctor-stat-grid mb-5">
+          {[
+            { label: "Total Patients", count: archivedLoadError ? null : totalPatients, icon: "patients" as IconName },
+            { label: "Today's Appointments", count: todayAppointments.length, icon: "today" as IconName },
+            { label: "Pending Appointments", count: activeAppointments.filter((appointment) => appointment.status === "pending").length, icon: "chat" as IconName },
+            { label: "Confirmed Appointments", count: activeAppointments.filter((appointment) => appointment.status === "confirmed").length, icon: "check" as IconName },
+            { label: "Completed Appointments", count: archivedLoadError ? null : completedAppointmentCount, icon: "check" as IconName },
+          ].map((item) => <article key={item.label} className="doctor-stat-card"><span><DoctorIcon name={item.icon} /></span><div><p>{item.label}</p><strong>{loading ? "—" : item.count ?? "—"}</strong></div></article>)}
+        </section>
+        <section aria-label="Today's overview" className="hidden">
           <article className="rounded-2xl bg-[#142B49] p-5 text-white shadow-[0_14px_35px_rgba(20,43,73,0.18)] sm:p-6">
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -469,23 +507,8 @@ export default function DoctorDashboard({
             ) : <p className="mt-5 rounded-xl border border-dashed border-[#DCE5EF] px-4 py-5 text-sm text-[#64748B]">No confirmed appointments are currently scheduled.</p>}
           </article>
         </section>
+        </>
       )}
-
-      <section aria-label="Appointment summary" className="mb-7 grid gap-3 sm:grid-cols-3">
-        {[
-          { label: "Pending", count: activeAppointments.filter((appointment) => appointment.status === "pending").length, tone: "text-[#8A651D]", icon: "!" },
-          { label: "Confirmed", count: activeAppointments.filter((appointment) => appointment.status === "confirmed").length, tone: "text-[#0F766E]", icon: "✓" },
-          { label: "Completed", count: activeAppointments.filter((appointment) => appointment.status === "completed").length, tone: "text-[#0F766E]", icon: "✓" },
-        ].map((item) => (
-          <article key={item.label} className="flex items-center justify-between rounded-xl border border-[#DCE5EF] bg-white p-4 shadow-[0_7px_20px_rgba(20,43,73,0.05)] sm:p-5">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">{item.label} appointments</p>
-              <p className={`mt-1 font-display text-3xl font-semibold ${item.tone}`}>{loading ? "—" : item.count}</p>
-            </div>
-            <span className={`flex h-11 w-11 items-center justify-center rounded-xl bg-[#F3F7FB] text-lg font-bold ${item.tone}`} aria-hidden="true">{item.icon}</span>
-          </article>
-        ))}
-      </section>
 
       {view === "archived" && archivedLoadError && (
         <p role="alert" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-[#76551A]">
@@ -504,22 +527,25 @@ export default function DoctorDashboard({
         </p>
       )}
 
-      <section aria-labelledby="doctor-appointments-heading" className="rounded-2xl border border-[#DCE5EF] bg-white p-4 shadow-[0_10px_30px_rgba(20,43,73,0.06)] sm:p-5">
+      {portalView === "chat" && <section className="doctor-chat-panel mb-5"><div className="doctor-section-title"><DoctorIcon name="chat" /><div><h2>Chat Center</h2><p>Open an existing appointment conversation.</p></div><button type="button" onClick={() => void loadAppointments()} aria-label="Refresh appointments"><DoctorIcon name="refresh" /></button></div>{chatAppointments.length ? <div className="doctor-chat-list">{chatAppointments.map((appointment) => <article key={appointment.id}><div><strong>{appointmentPatientName(appointment)}</strong><small>{formatDate(appointment.appointment_date)} · {formatTime(appointment.appointment_time)}</small></div><button type="button" onClick={() => setOpenChatAppointmentId(openChatAppointmentId === appointment.id ? null : appointment.id)}>{openChatAppointmentId === appointment.id ? "Close Chat" : "Open Chat"}</button>{openChatAppointmentId === appointment.id && <div className="doctor-chat-embed"><AppointmentChat appointmentId={appointment.id} doctorDetails={{ doctorName, appointmentDate: formatDate(appointment.appointment_date), appointmentTime: formatTime(appointment.appointment_time), patientMessage: appointment.patient_message, status: appointment.status }} /></div>}</article>)}</div> : <p className="doctor-empty-chat">No confirmed or completed appointment conversations are available.</p>}</section>}
+
+      <div className={`doctor-dashboard-columns ${portalView === "dashboard" ? "with-profile" : ""}`}>
+      <section aria-labelledby="doctor-appointments-heading" className={`rounded-2xl border border-[#DCE5EF] bg-white p-4 shadow-[0_10px_30px_rgba(20,43,73,0.06)] sm:p-5 ${portalView === "chat" ? "hidden" : ""}`}>
         <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#0D9488]">Consultation schedule</p>
             <h2 id="doctor-appointments-heading" className="mt-1 font-display text-2xl font-semibold text-[#142B49]">
-              {portalView === "today" ? "Today's appointments" : portalView === "next" ? "Next appointment" : portalView === "upcoming" ? "Upcoming appointments" : view === "archived" ? "Appointment history" : "Appointment management"}
+              {portalView === "today" ? "Today's appointments" : portalView === "next" ? "Next appointment" : portalView === "upcoming" ? "Upcoming appointments" : view === "archived" ? "Appointment history" : "Recent Appointments"}
             </h2>
             <p className="mt-1 text-sm text-[#64748B]">
-              {view === "archived" ? "Review consultations archived from the active doctor dashboard." : portalView === "today" ? "Review today's schedule and manage appointment actions." : portalView === "next" ? "Your next confirmed consultation." : portalView === "upcoming" ? "Confirmed consultations scheduled after today." : "Review requests, upcoming consultations, and completed visits."}
+              {view === "archived" ? "Review consultations archived from the active doctor dashboard." : portalView === "today" ? "Review today's schedule and manage appointment actions." : portalView === "next" ? "Your next confirmed consultation." : portalView === "upcoming" ? "Confirmed consultations scheduled after today." : "Latest appointment records, with patient details and status."}
             </p>
           </div>
           {!loading && <p className="text-sm font-medium text-[#64748B]">Showing {visibleAppointments.length} of {appointments.length}</p>}
         </div>
         {!loading && appointments.length > 0 && (
           <div className="mb-5 flex flex-col gap-2 sm:flex-row">
-            <label className="relative min-w-0 flex-1">
+            <label className="relative min-w-0 flex-1 hidden">
               <span className="sr-only">Search appointments</span>
               <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#7890AF]" aria-hidden="true">⌕</span>
               <input
@@ -579,14 +605,36 @@ export default function DoctorDashboard({
                     <p className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">
                       {appointment.status === "confirmed" && upcoming ? "Upcoming consultation" : "Patient appointment"}
                     </p>
-                    <h3 className="mt-1 font-semibold text-[#243449]">{formatDate(appointment.appointment_date)}</h3>
-                    <p className="mt-1 text-sm text-[#64748B]">{formatTime(appointment.appointment_time)}</p>
+                    <h3 className="mt-1 font-semibold text-[#243449]">{appointmentPatientName(appointment)}</h3>
+                    <p className="mt-1 text-sm text-[#64748B]">{formatDate(appointment.appointment_date)} · {formatTime(appointment.appointment_time)}</p>
+                    <button type="button" className="doctor-details-toggle mt-3" aria-expanded={expandedAppointmentId === appointment.id} onClick={() => setExpandedAppointmentId(expandedAppointmentId === appointment.id ? null : appointment.id)}>{expandedAppointmentId === appointment.id ? "Hide Details" : "View Details"}</button>
+                    {expandedAppointmentId === appointment.id && <><div className="mt-4 rounded-xl border border-[#D9E7F3] bg-gradient-to-br from-[#F4F9FF] to-white p-4">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.13em] text-[#3978C5]">Patient information</p>
+                      {patientDetailsError ? (
+                        <p role="status" className="mt-2 text-sm text-[#64748B]">Patient information is unavailable right now.</p>
+                      ) : (
+                        <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3">
+                          <div className="min-w-0">
+                            <dt className="text-xs text-[#71829C]">Full name</dt>
+                            <dd className="mt-0.5 break-words font-semibold text-[#173B73]">{patientDetails[appointment.id]?.patient_full_name?.trim() || "Not provided"}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs text-[#71829C]">Age</dt>
+                            <dd className="mt-0.5 font-semibold text-[#173B73]">{patientDetails[appointment.id]?.patient_age ?? "Not provided"}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs text-[#71829C]">Gender</dt>
+                            <dd className="mt-0.5 font-semibold text-[#173B73]">{patientDetails[appointment.id]?.patient_gender === "prefer_not_to_say" ? "Prefer not to say" : patientDetails[appointment.id]?.patient_gender ? patientDetails[appointment.id].patient_gender!.replace(/^./, (letter) => letter.toUpperCase()) : "Not provided"}</dd>
+                          </div>
+                        </dl>
+                      )}
+                    </div>
                     {appointment.patient_message && (
                       <div className="mt-3 rounded-lg bg-[#F3F7FB] px-3 py-2">
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-[#64748B]">Patient message</p>
                         <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-[#243449]/80">{appointment.patient_message}</p>
                       </div>
-                    )}
+                    )}</>}
                   </div>
                   <span className={`inline-flex w-fit shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold ${statusStyle(appointment.status)}`}>
                     {appointment.status === "confirmed" && upcoming ? "Upcoming · Confirmed" : appointment.status.charAt(0).toUpperCase() + appointment.status.slice(1)}
@@ -612,32 +660,6 @@ export default function DoctorDashboard({
                       className="min-h-10 rounded-lg border border-[#F0C9CC] bg-white px-4 py-2 text-sm font-semibold text-[#A5404A] transition hover:bg-[#FFF0F1] focus:outline-none focus:ring-2 focus:ring-[#FCA5A5] focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       Reject request
-                    </button>
-                  </div>
-                )}
-
-                {appointment.status === "confirmed" && (
-                  <div className="flex flex-col gap-2 border-t border-[#DCE5EF] px-4 py-3 sm:flex-row sm:px-5">
-                    <input
-                      aria-label={`Consultation link for ${formatDate(appointment.appointment_date)}`}
-                      type="url"
-                      placeholder="https://meeting.example.com/..."
-                      value={meetingLinks[appointment.id] ?? ""}
-                      onChange={(event) => setMeetingLinks({
-                        ...meetingLinks,
-                        [appointment.id]: event.target.value,
-                      })}
-                      className="min-h-10 min-w-0 flex-1 rounded-lg border border-[#DCE5EF] px-3 py-2 text-sm focus:border-[#0D9488] focus:outline-none focus:ring-2 focus:ring-[#0D9488]/20"
-                    />
-                    <button
-                      type="button"
-                      disabled={savingId !== null}
-                      onClick={() => void updateAppointment(appointment, {
-                        meeting_link: meetingLinks[appointment.id]?.trim() || null,
-                      })}
-                      className="min-h-10 rounded-lg border border-[#DCE5EF] px-4 py-2 text-sm font-medium text-[#243449] hover:bg-[#F3F7FB] focus:outline-none focus:ring-2 focus:ring-[#0D9488]/20 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {savingId === appointment.id ? "Saving…" : "Save consultation link"}
                     </button>
                   </div>
                 )}
@@ -677,22 +699,6 @@ export default function DoctorDashboard({
                   )}
                 </div>
 
-                {view === "active" && <div className="border-t border-[#DCE5EF] px-4 py-3 sm:px-5">
-                  <button
-                    type="button"
-                    aria-label={`Archive consultation from ${formatDate(appointment.appointment_date)}`}
-                    disabled={savingId !== null || archivingId !== null}
-                    onClick={() => {
-                      setError(null);
-                      setNotice(null);
-                      setArchiveTarget(appointment);
-                    }}
-                    className="min-h-10 rounded-lg border border-[#E5A8AD] px-4 py-2 text-sm font-semibold text-[#B13D49] transition hover:bg-[#FFF2F3] disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    Archive consultation
-                  </button>
-                </div>}
-
                 {(appointment.status === "confirmed" || appointment.status === "completed") && (
                   <div className="border-t border-[#DCE5EF] px-4 py-3 sm:px-5">
                     <button
@@ -727,75 +733,9 @@ export default function DoctorDashboard({
             </div>
         )}
       </section>
+      {portalView === "dashboard" && <aside className="doctor-dashboard-aside"><section className="doctor-profile-card"><div className="doctor-section-title"><DoctorIcon name="profile" /><h2>Doctor Profile</h2></div><div className="doctor-profile-body">{doctorProfile?.image_url ? <img src={doctorProfile.image_url} alt={`${doctorProfile.name || doctorName} profile`} /> : <span className="doctor-profile-placeholder"><DoctorIcon name="doctor" /></span>}<h3>{doctorProfile?.name || doctorName}</h3><p>{doctorProfile?.specialization || "Specialization not listed"}</p><span className="doctor-active-pill">{doctorProfile?.is_active ? "Active" : "Inactive"}</span><dl><div><dt>Experience</dt><dd>{doctorProfile?.experience != null ? `${doctorProfile.experience} Years` : "Not listed"}</dd></div><div><dt>Qualification</dt><dd>{doctorProfile?.qualification || "Not listed"}</dd></div><div><dt>Consultation Fee</dt><dd>{consultationFee !== null ? formatCurrency(consultationFee, "PKR") : "Not set"}</dd></div></dl></div></section><section className="doctor-chat-center"><div className="doctor-section-title"><DoctorIcon name="chat" /><h2>Chat Center</h2></div><p>Continue conversations linked to eligible appointments.</p><button type="button" onClick={() => selectPortalView("chat")}><DoctorIcon name="chat" />Open Chat<DoctorIcon name="arrow" /></button></section></aside>}
+      </div>
 
-      {archiveTarget && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[#173B73]/35 p-4 backdrop-blur-[2px]"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && archivingId === null) setArchiveTarget(null);
-          }}
-        >
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="archive-consultation-title"
-            className="w-full max-w-md rounded-2xl border border-[#E6D1D3] bg-white p-5 shadow-[0_20px_60px_rgba(23,59,115,0.24)] sm:p-6"
-          >
-            <div className="flex items-start gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0F1] text-[#B13D49]" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth="1.8">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 7h14M10 11v5m4-5v5M7 7l1 13h8l1-13M9 7V4h6v3" />
-                </svg>
-              </span>
-              <div>
-                <h2 id="archive-consultation-title" className="text-lg font-semibold text-[#173B73]">Archive consultation?</h2>
-                <p className="mt-1 text-sm leading-5 text-[#617593]">
-                  This removes the appointment from your active doctor dashboard. It does not delete the patient, chat, attachments, payments, or medical history, and can be reversed by an administrator.
-                </p>
-              </div>
-            </div>
-
-            <dl className="mt-5 grid gap-3 rounded-xl border border-[#E3EAF3] bg-[#F8FAFD] p-4 text-sm sm:grid-cols-2">
-              <div>
-                <dt className="text-xs font-medium text-[#71829C]">Appointment date</dt>
-                <dd className="mt-1 font-semibold text-[#173B73]">{formatDate(archiveTarget.appointment_date)}</dd>
-              </div>
-              <div>
-                <dt className="text-xs font-medium text-[#71829C]">Appointment time</dt>
-                <dd className="mt-1 font-semibold text-[#173B73]">{formatTime(archiveTarget.appointment_time)}</dd>
-              </div>
-              <div className="sm:col-span-2">
-                <dt className="text-xs font-medium text-[#71829C]">Appointment ID</dt>
-                <dd className="mt-1 break-all font-mono text-xs text-[#405777]">{archiveTarget.id}</dd>
-              </div>
-            </dl>
-
-            <p className="mt-4 rounded-lg border border-[#F1D99B] bg-[#FFF9EA] px-3 py-2 text-xs leading-5 text-[#76551A]">
-              No permanent deletion will occur. Confirm only if you want this consultation hidden from your active appointment list.
-            </p>
-
-            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                disabled={archivingId !== null}
-                onClick={() => setArchiveTarget(null)}
-                className="min-h-10 rounded-lg border border-[#D5DFEC] px-4 py-2 text-sm font-semibold text-[#405777] hover:bg-[#F5F8FC] disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={archivingId !== null}
-                onClick={() => void archiveAppointment()}
-                className="min-h-10 rounded-lg bg-[#B13D49] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#98313D] disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {archivingId === archiveTarget.id ? "Archiving…" : "Confirm Archive"}
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
     </div>
     </div>
   </main>

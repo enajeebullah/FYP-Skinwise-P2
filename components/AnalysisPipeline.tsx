@@ -21,9 +21,9 @@ export default function AnalysisPipeline({ weatherStatus }: AnalysisPipelineProp
   ];
 
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs font-mono text-muted">
+    <div className="analysis-pipeline flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs font-mono text-muted" aria-label="Analysis progress">
       {steps.map((step, i) => (
-        <span key={step.label} className="flex items-center gap-1.5">
+        <span key={step.label} className="analysis-pipeline-step flex items-center gap-1.5">
           <span className={step.done ? "text-normal" : "text-muted"}>
             {step.done ? "✓" : "○"}
           </span>

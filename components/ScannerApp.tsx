@@ -151,50 +151,58 @@ export default function ScannerApp({ userId }: { userId: string }) {
   }
 
   return (
-    <section className="scanner-start max-w-5xl mx-auto px-6 pt-16 pb-8 grid md:grid-cols-2 gap-14 items-start">
-      <div>
-        <p className="font-mono text-xs uppercase tracking-wider text-muted mb-4">
+    <section className="scanner-start scanner-page max-w-5xl mx-auto px-6 pt-16 pb-8 grid md:grid-cols-2 gap-14 items-start">
+      <div className="scanner-intro">
+        <div className="scanner-hero-portrait" aria-hidden="true">
+          <img src="/images/scan-hero-portrait.webp" alt="" />
+        </div>
+        <p className="scanner-eyebrow font-mono text-xs uppercase tracking-wider text-muted mb-4">
           Photo in → reading out
         </p>
-        <h1 className="font-display text-[2.6rem] sm:text-5xl leading-[1.08]">
-          Your skin, read in one frame.
+        <h1 className="scanner-title font-display text-[2.6rem] sm:text-5xl leading-[1.08]">
+          A clearer picture of your skin.
         </h1>
-        <p className="mt-5 text-[17px] leading-relaxed text-ink/75 max-w-md">
-          Upload a clear frontal photo or use your camera. SkinWISE reads
-          your skin type, detects and grades acne lesions, pulls in live
-          weather, and builds a personalised routine. AI analysis runs on
-          your configured SkinWISE server; uploaded photos are not saved by
-          the inference API.
+        <p className="scanner-description mt-5 text-[17px] leading-relaxed text-ink/75 max-w-md">
+          Start with a clear frontal photo. SkinWISE analyses visible skin
+          characteristics and acne, then brings your results together in a
+          personal skin dashboard.
         </p>
 
-        <div className="mt-8 space-y-3 max-w-sm">
+        <ol className="scanner-flow" aria-label="Analysis steps">
+          <li><span>01</span> Add a photo</li>
+          <li><span>02</span> Confirm skin type</li>
+          <li><span>03</span> Review results</li>
+        </ol>
+
+        <div className="scanner-skin-types mt-8">
           {(["dry", "normal", "oily"] as const).map((c) => (
-            <div key={c} className="flex items-center gap-3 text-sm">
+            <div key={c} className={`scanner-skin-card scanner-skin-card-${c}`}>
               <span
-                className="h-2 w-2 rounded-full shrink-0"
-                style={{
-                  backgroundColor:
-                    c === "dry" ? "#C6875A" : c === "normal" ? "#6F9A6A" : "#2F7189",
-                }}
+                className="scanner-skin-indicator"
+                aria-hidden="true"
               />
-              <span className="text-ink/70">
-                {c === "dry" && "Dry — tighter barrier, lower sebum output"}
-                {c === "normal" && "Normal — balanced oil and hydration"}
-                {c === "oily" && "Oily — higher sebum, visible shine by midday"}
+              <span className="scanner-skin-copy">
+                <strong>{c}</strong>
+                <span>
+                  {c === "dry" && "A feeling of tightness or flaking"}
+                  {c === "normal" && "A comfortable, balanced feel"}
+                  {c === "oily" && "Shine or excess surface oil"}
+                </span>
               </span>
             </div>
           ))}
         </div>
       </div>
 
-      <div>
+      <div className="scanner-controls">
         {stage === "idle" && (
           <>
-            <div className="flex gap-1 mb-4 rounded-full bg-line/60 p-1 w-fit">
+            <div className="scanner-mode-switch flex gap-1 mb-4 rounded-full bg-line/60 p-1 w-fit" role="group" aria-label="Photo source">
               {(["upload", "camera"] as Mode[]).map((m) => (
                 <button
                   key={m}
                   onClick={() => setMode(m)}
+                  aria-pressed={mode === m}
                   className={`focus-ring rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
                     mode === m ? "bg-ink text-paper" : "text-ink/60 hover:text-ink"
                   }`}
@@ -210,12 +218,19 @@ export default function ScannerApp({ userId }: { userId: string }) {
               <CameraCapture onImageReady={handleImageReady} />
             )}
             <div className="scanner-tips">
-              <p>For the clearest result</p>
+              <p>Get the clearest result</p>
               <ul>
                 <li>Face the camera straight on in soft, even light.</li>
                 <li>Keep your face clear of filters, makeup, and obstructions.</li>
                 <li>Use a sharp, close-up photo with your full face in frame.</li>
               </ul>
+            </div>
+            <div className="scanner-privacy" role="note">
+              <svg className="scanner-privacy-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 3.5 19 6v5.1c0 4.5-2.9 7.8-7 9.4-4.1-1.6-7-4.9-7-9.4V6l7-2.5Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+                <path d="m9 12 2 2 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <p><strong>Private by design.</strong> Your photo is processed by the configured SkinWISE analysis service and is not saved to your account.</p>
             </div>
           </>
         )}

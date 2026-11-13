@@ -1,6 +1,7 @@
 "use client";
 
 import type { Routine } from "@/lib/routineEngine";
+import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 import type { ComponentType, MouseEvent } from "react";
 import { CLASS_META, type SkinClass } from "@/lib/constants";
@@ -247,7 +248,7 @@ export default function RoutineCard({
 
       <p className="text-sm text-ink/60 mb-4">
         What to use, based on your Overall Severity, detected lesion pattern,
-        and predicted skin type
+        and confirmed skin type
         {hasWeather ? ", and local weather" : ""}.
       </p>
 
@@ -353,7 +354,7 @@ export default function RoutineCard({
           {rows.map((row) => (
             <div
               key={row.key}
-              className="flex min-w-0 items-center gap-4 rounded-xl border border-line/80 bg-paper/60 p-3 sm:p-4"
+              className="routine-product-card flex min-w-0 items-center gap-4 rounded-xl border border-line/80 bg-paper/60 p-3 sm:p-4"
             >
               <ProductImageButton
                 src={row.image}
@@ -381,7 +382,7 @@ export default function RoutineCard({
           ))}
 
           {!routine.professionalEvaluationRecommended && (
-            <div className="flex min-w-0 items-center gap-4 rounded-xl border border-line/80 bg-paper/60 p-3 sm:p-4">
+            <div className="routine-product-card flex min-w-0 items-center gap-4 rounded-xl border border-line/80 bg-paper/60 p-3 sm:p-4">
               <ProductImageButton
                 src="/images/products/acne-care.png"
                 alt="Generic illustration of an acne-care treatment bottle; not a specific brand or verified product."
@@ -423,31 +424,29 @@ export default function RoutineCard({
         </div>
       )}
 
-      {!routine.recommendationPaused && (
-        <section className="mt-6 rounded-xl border border-[#8995d5]/25 bg-[#8995d5]/[0.06] px-4 py-4 sm:px-5" aria-labelledby="skincare-guidance-heading">
-          <div className="flex items-start gap-3">
-            <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full border border-[#8995d5]/25 bg-white/70 text-sm font-semibold text-[#6574d1]" aria-hidden="true">i</span>
-            <div className="min-w-0">
-              <h3 id="skincare-guidance-heading" className="text-sm font-semibold tracking-wide text-ink">
-                Important Skincare Guidance
-              </h3>
-              <p className="mt-1.5 text-xs leading-5 text-ink/65 sm:text-[13px]">
-                These are common acne-care ingredients and treatment options,
-                not a prescription. SkinWISE does not prescribe medicine —
-                availability and prescription requirements vary by country.
-                Adapalene and benzoyl peroxide can cause irritation; follow the
-                product label, introduce new products cautiously and gradually,
-                and ask a pharmacist or healthcare professional if you are
-                unsure about local requirements or what is suitable for you.
-                Always patch-test new products, and consult a dermatologist for
-                anything beyond mild concerns.
-              </p>
-            </div>
+      <section className="routine-guidance-card mt-6 rounded-xl border border-[#8995d5]/25 bg-[#8995d5]/[0.06] px-4 py-4 sm:px-5" aria-labelledby="skincare-guidance-heading">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full border border-[#8995d5]/25 bg-white/70 text-sm font-semibold text-[#6574d1]" aria-hidden="true">i</span>
+          <div className="min-w-0">
+            <h3 id="skincare-guidance-heading" className="text-sm font-semibold tracking-wide text-ink">
+              Important Skincare Guidance
+            </h3>
+            <p className="mt-1.5 text-xs leading-5 text-ink/65 sm:text-[13px]">
+              SkinWISE provides general skincare guidance, not a medical
+              diagnosis or prescription. Follow product labels, introduce new
+              products gradually, and patch-test where appropriate. Adapalene
+              and benzoyl peroxide may cause irritation. Avoid adapalene during
+              pregnancy or when planning pregnancy; consult a healthcare
+              professional before starting acne treatments during
+              breastfeeding. Consult a dermatologist for painful, deep,
+              persistent acne or scarring. Seek emergency help for difficulty
+              breathing or swelling of the face or throat. When unsure, ask a
+              pharmacist or qualified healthcare professional.
+            </p>
           </div>
-        </section>
-      )}
-
-      {preview && (
+        </div>
+      </section>
+      {preview && typeof document !== "undefined" && createPortal(
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/65 p-4 sm:p-8"
           onClick={(event) => {
@@ -477,7 +476,8 @@ export default function RoutineCard({
               onError={() => setPreview(null)}
             />
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

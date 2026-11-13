@@ -308,6 +308,7 @@ function ChatComposer({
 }
 
 export default function AppointmentChat({ appointmentId, patientDetails, doctorDetails }: AppointmentChatProps) {
+  const [supabase] = useState(() => createClient());
   const [messages, setMessages] = useState<AppointmentMessage[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -322,7 +323,6 @@ export default function AppointmentChat({ appointmentId, patientDetails, doctorD
     setLoading(true);
     setError(null);
 
-    const supabase = createClient();
     const {
       data: { user },
       error: authError,
@@ -358,6 +358,44 @@ export default function AppointmentChat({ appointmentId, patientDetails, doctorD
   useEffect(() => {
     void loadMessages();
   }, [loadMessages]);
+
+  useEffect(() => {
+    let active = true;
+    const channel = supabase
+      .channel(`appointment-messages:${appointmentId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "appointment_messages",
+          filter: `appointment_id=eq.${appointmentId}`,
+        },
+        (payload) => {
+          const message = payload.new as AppointmentMessage;
+          if (!active || !message.id) return;
+          setMessages((current) =>
+            current.some((item) => item.id === message.id)
+              ? current
+              : [...current, message].sort((a, b) => {
+                  const byCreatedAt = a.created_at.localeCompare(b.created_at);
+                  return byCreatedAt || a.id.localeCompare(b.id);
+                })
+          );
+        }
+      )
+      .subscribe((status, subscriptionError) => {
+        if (!active || status === "SUBSCRIBED") return;
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          console.error("Appointment chat Realtime subscription issue", subscriptionError ?? status);
+        }
+      });
+
+    return () => {
+      active = false;
+      void supabase.removeChannel(channel);
+    };
+  }, [appointmentId, supabase]);
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

@@ -2,10 +2,8 @@
 
 import { useState } from "react";
 import ResultPanel from "./ResultPanel";
-import SkinTypeQuiz from "./SkinTypeQuiz";
-import { CLASS_META, CLASS_ORDER, type SkinClass } from "@/lib/constants";
+import { CLASS_META, type SkinClass } from "@/lib/constants";
 import type { PredictionResult } from "@/lib/model";
-import type { QuizResult } from "@/lib/skinQuiz";
 
 interface ConfirmSkinTypeProps {
   imageSrc: string;
@@ -14,10 +12,25 @@ interface ConfirmSkinTypeProps {
   onStartOver: () => void;
 }
 
-// A prediction is "borderline" if the top two classes are close — that's
-// exactly when a quick self-report question is most useful, since the CNN
-// itself wasn't clearly confident either way.
-const BORDERLINE_GAP = 0.2;
+type SkinTypeChoice = SkinClass | "unsure";
+
+const CHOICES: { type: SkinTypeChoice; label: string; description: string; tone: string }[] = [
+  { type: "oily", label: "Oily", description: "Produces more oil, prone to shine and breakouts.", tone: "oily" },
+  { type: "normal", label: "Normal", description: "Balanced oil and moisture levels.", tone: "normal" },
+  { type: "dry", label: "Dry", description: "Feels tight, may be flaky or rough.", tone: "dry" },
+  { type: "unsure", label: "I’m not sure", description: "Let’s continue with the AI detected type.", tone: "unsure" },
+];
+
+function SkinIcon({ tone }: { tone: string }) {
+  return (
+    <span className={`skin-choice-icon skin-choice-icon-${tone}`} aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none">
+        <path d="M12 3.5C9.4 7.1 6.5 10.2 6.5 14a5.5 5.5 0 0 0 11 0c0-3.8-2.9-6.9-5.5-10.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M9.5 14.5c.2 1.3 1.1 2.1 2.5 2.3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+    </span>
+  );
+}
 
 export default function ConfirmSkinType({
   imageSrc,
@@ -25,164 +38,82 @@ export default function ConfirmSkinType({
   onContinue,
   onStartOver,
 }: ConfirmSkinTypeProps) {
-  const [showQuiz, setShowQuiz] = useState(false);
-  const [quizResult, setQuizResult] = useState<QuizResult | null>(null);
-  const [selectedType, setSelectedType] = useState<SkinClass>(skinResult.topClass);
-
-  const sorted = CLASS_ORDER.map((c) => skinResult.scores[c]).sort((a, b) => b - a);
-  const gap = sorted[0] - sorted[1];
-  const isBorderline = gap < BORDERLINE_GAP;
-
-  function handleQuizComplete(result: QuizResult) {
-    setQuizResult(result);
-    // Default the selection to something sensible so "Continue" always has
-    // a valid value even before the user picks explicitly:
-    //  - clear winner that matches the scan → nothing to resolve
-    //  - clear winner that differs → default to the quiz's answer
-    //  - a tie → default to the scan's own result until the user decides
-    if (result.winner) {
-      setSelectedType(result.winner);
-    }
-    setShowQuiz(false);
-  }
-
-  const isTie = quizResult !== null && quizResult.winner === null;
-  const agrees = quizResult !== null && quizResult.winner === skinResult.topClass;
-  const disagreesCleanly =
-    quizResult !== null && quizResult.winner !== null && quizResult.winner !== skinResult.topClass;
-
-  // Every type that's "in play" once there's a tie or a scan/quiz mismatch —
-  // deduplicated, so the user picks from a single clear set of buttons
-  // regardless of whether this came from a 2-way disagreement or an N-way tie.
-  const candidates: SkinClass[] = quizResult
-    ? Array.from(
-        new Set<SkinClass>([
-          skinResult.topClass,
-          ...(quizResult.winner ? [quizResult.winner] : quizResult.tiedTypes),
-        ])
-      )
-    : [];
+  const [selectedType, setSelectedType] = useState<SkinTypeChoice>(skinResult.topClass);
+  const predictedType = CLASS_META[skinResult.topClass];
+  const effectiveType = selectedType === "unsure" ? skinResult.topClass : selectedType;
 
   return (
-    <div className="max-w-2xl mx-auto px-6 py-16 space-y-6 animate-fadeUp">
-      <ResultPanel result={skinResult} imageSrc={imageSrc} />
+    <main className="skin-confirm-page animate-fadeUp">
+      <section className="skin-confirm-card" aria-label="Confirm your skin type">
+        <div className="skin-confirm-result">
+          <ResultPanel result={skinResult} imageSrc={imageSrc} showConfidenceDetails={false} />
 
-      {isBorderline && !quizResult && (
-        <div className="rounded-2xl border border-line bg-paper p-5 flex items-start gap-3">
-          <span className="text-lg leading-none mt-0.5">🤔</span>
-          <div>
-            <p className="text-sm font-medium text-ink">
-              The model wasn&rsquo;t fully confident on this one
-            </p>
-            <p className="text-sm text-ink/70 mt-1">
-              {CLASS_META[CLASS_ORDER.find((c) => skinResult.scores[c] === sorted[0])!].label} and{" "}
-              {CLASS_META[CLASS_ORDER.find((c) => skinResult.scores[c] === sorted[1])!].label} scored
-              close together. A quick 4-question check can help confirm which fits better.
-            </p>
-            <button
-              onClick={() => setShowQuiz(true)}
-              className="focus-ring mt-3 text-sm font-medium underline underline-offset-4"
-            >
-              Take the quick quiz
-            </button>
+          <div className="skin-ai-note" role="note">
+            <span className="skin-ai-note-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M9 4.5a3 3 0 0 0-3 3v.3a3.5 3.5 0 0 0-1 6.7v.5a3 3 0 0 0 4 2.8V4.5Zm6 0a3 3 0 0 1 3 3v.3a3.5 3.5 0 0 1 1 6.7v.5a3 3 0 0 1-4 2.8V4.5ZM9 4.5a3 3 0 0 1 6 0v15a3 3 0 0 1-6 0v-15Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+                <path d="M7.5 10.5H9m6 0h1.5M7.5 14H9m6 0h1.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            </span>
+            <span>
+              <strong>Detected by AI</strong>
+              <span>This result is based on your uploaded photo. You can select another skin type below if a different type feels more accurate.</span>
+            </span>
           </div>
         </div>
-      )}
 
-      {!isBorderline && !quizResult && !showQuiz && (
-        <button
-          onClick={() => setShowQuiz(true)}
-          className="focus-ring text-sm text-ink/60 hover:text-ink underline underline-offset-4"
-        >
-          Not sure this is right? Take a quick quiz to double-check
-        </button>
-      )}
-
-      {showQuiz && <SkinTypeQuiz onComplete={handleQuizComplete} />}
-
-      {quizResult && agrees && (
-        <div className="rounded-2xl border border-line bg-paper p-5">
-          <p className="text-sm text-ink">
-            <span className="text-normal font-medium">✓ Quiz confirms it</span> — your answers
-            also point to <strong>{CLASS_META[quizResult.winner!].label.toLowerCase()}</strong> skin.
-          </p>
-        </div>
-      )}
-
-      {quizResult && disagreesCleanly && (
-        <div className="rounded-2xl border border-line bg-paper p-5">
-          <p className="text-sm text-ink mb-3">
-            Your quiz answers point to{" "}
-            <strong>{CLASS_META[quizResult.winner!].label.toLowerCase()}</strong> skin, which
-            differs from the scan&rsquo;s top result (
-            {CLASS_META[skinResult.topClass].label.toLowerCase()}). Which would you like to use
-            for your routine?
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {candidates.map((option) => (
-              <button
-                key={option}
-                onClick={() => setSelectedType(option)}
-                className={`focus-ring rounded-full px-4 py-1.5 text-sm font-medium border transition-colors ${
-                  selectedType === option
-                    ? "bg-ink text-paper border-ink"
-                    : "border-line text-ink/70 hover:border-ink/40"
-                }`}
-              >
-                {CLASS_META[option].label}
-                {option === skinResult.topClass ? " (scan)" : " (quiz)"}
-              </button>
-            ))}
+        <section className="skin-choice-section" aria-labelledby="skin-choice-title">
+          <div className="skin-choice-heading">
+            <span className="skin-choice-heading-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="7.5" r="4" stroke="currentColor" strokeWidth="1.7" />
+                <path d="M4.5 20c.7-3.7 3.5-5.5 7.5-5.5s6.8 1.8 7.5 5.5H4.5Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+              </svg>
+            </span>
+            <span>
+              <h2 id="skin-choice-title">What is your skin type?</h2>
+              <p>You can choose the skin type detected by AI or select your own if you’re unsure.</p>
+            </span>
           </div>
-        </div>
-      )}
 
-      {quizResult && isTie && (
-        <div className="rounded-2xl border border-line bg-paper p-5">
-          <p className="text-sm text-ink mb-3">
-            Your quiz answers were <strong>tied</strong> between{" "}
-            {quizResult.tiedTypes.map((t) => CLASS_META[t].label).join(" and ")} (
-            {quizResult.totals[quizResult.tiedTypes[0]]} points each) — the quiz alone
-            couldn&rsquo;t distinguish between them. Please choose which feels most accurate,
-            alongside the scan&rsquo;s own result.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {candidates.map((option) => (
-              <button
-                key={option}
-                onClick={() => setSelectedType(option)}
-                className={`focus-ring rounded-full px-4 py-1.5 text-sm font-medium border transition-colors ${
-                  selectedType === option
-                    ? "bg-ink text-paper border-ink"
-                    : "border-line text-ink/70 hover:border-ink/40"
-                }`}
-              >
-                {CLASS_META[option].label}
-                {option === skinResult.topClass
-                  ? " (scan)"
-                  : quizResult.tiedTypes.includes(option)
-                  ? " (quiz — tied)"
-                  : ""}
-              </button>
-            ))}
+          <div className="skin-choice-grid" role="group" aria-labelledby="skin-choice-title">
+            {CHOICES.map((choice) => {
+              const selected = selectedType === choice.type;
+              return (
+                <button
+                  key={choice.type}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => setSelectedType(choice.type)}
+                  className={`skin-choice-card${selected ? " selected" : ""}`}
+                >
+                  <SkinIcon tone={choice.tone} />
+                  <strong>{choice.label}</strong>
+                  <span className="skin-choice-description">{choice.description}</span>
+                  <span className="skin-choice-radio" aria-hidden="true">
+                    {selected && <span />}
+                  </span>
+                  {choice.type === "unsure" && (
+                    <span className="sr-only">Continue with {predictedType.label}, the AI detected type</span>
+                  )}
+                </button>
+              );
+            })}
           </div>
-        </div>
-      )}
+        </section>
 
-      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-        <button
-          onClick={() => onContinue(selectedType)}
-          className="focus-ring w-full sm:w-auto rounded-full bg-ink text-paper px-6 py-2.5 text-sm font-medium hover:opacity-90 transition-opacity"
-        >
-          Confirm {CLASS_META[selectedType].label.toLowerCase()} skin & continue to acne scan
-        </button>
-        <button
-          onClick={onStartOver}
-          className="focus-ring text-sm font-medium text-ink/60 hover:text-ink underline underline-offset-4"
-        >
-          Start over with a different photo
-        </button>
-      </div>
-    </div>
+        <div className="skin-confirm-actions">
+          <button type="button" onClick={() => onContinue(effectiveType)} className="skin-confirm-button focus-ring">
+            Confirm &amp; Continue to Acne Scan
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <button type="button" onClick={onStartOver} className="skin-confirm-start-over focus-ring">
+            Start over with a different photo
+          </button>
+        </div>
+      </section>
+    </main>
   );
 }

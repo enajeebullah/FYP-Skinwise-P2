@@ -5,6 +5,14 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { SAFETY_FLAG_META, type SafetyFlags } from "@/lib/constants";
 
+const SAFETY_FLAG_PRESENTATION: Record<keyof SafetyFlags, { icon: string; description: string }> = {
+  pregnantOrBreastfeeding: { icon: "◌", description: "Some ingredients may not be suitable during pregnancy or breastfeeding." },
+  onIsotretinoin: { icon: "▱", description: "This medicine may interact with other treatments." },
+  openWoundOrInfection: { icon: "✚", description: "Open wounds or active infections may need special care." },
+  knownActiveAllergy: { icon: "✳", description: "Helps identify products that may trigger a reaction." },
+  under15: { icon: "♙", description: "Some products may not be suitable for younger skin." },
+};
+
 interface SafetyProfileFormProps {
   userId: string;
   initialFlags: SafetyFlags;
@@ -48,8 +56,8 @@ export default function SafetyProfileForm({
     setStatus("saved");
     if (isOnboarding) {
       router.push("/");
-      router.refresh();
     }
+    router.refresh();
   }
 
   async function handleSkip() {
@@ -70,13 +78,14 @@ export default function SafetyProfileForm({
   }
 
   return (
-    <div className="rounded-2xl border border-line bg-panel panel-elevated p-6 sm:p-8 space-y-4">
+    <div className="safety-profile-form rounded-2xl border border-line bg-panel panel-elevated p-6 sm:p-8 space-y-4">
       {(Object.keys(SAFETY_FLAG_META) as (keyof SafetyFlags)[]).map((key) => {
         const meta = SAFETY_FLAG_META[key];
+        const presentation = SAFETY_FLAG_PRESENTATION[key];
         return (
           <label
             key={key}
-            className="flex items-start gap-3 rounded-xl border border-line p-4 cursor-pointer hover:bg-paper transition-colors"
+            className="safety-flag-option flex items-start gap-3 rounded-xl border border-line p-4 cursor-pointer hover:bg-paper transition-colors"
           >
             <input
               type="checkbox"
@@ -84,16 +93,25 @@ export default function SafetyProfileForm({
               onChange={() => toggle(key)}
               className="mt-0.5 h-4 w-4 accent-ink"
             />
-            <span className="text-sm text-ink">{meta.label}</span>
+            <span className="safety-flag-icon" aria-hidden="true">{presentation.icon}</span>
+            <span className="safety-flag-copy">
+              <strong>{meta.label}</strong>
+              <small>{presentation.description}</small>
+            </span>
           </label>
         );
       })}
 
-      <div className="flex flex-wrap items-center gap-4 pt-2">
+      <div className="safety-profile-actions flex flex-wrap items-center gap-4 pt-2">
+        {!isOnboarding && (
+          <a href="/" className="safety-profile-home-button focus-ring rounded">
+            <span aria-hidden="true">‹</span> Back to Home
+          </a>
+        )}
         <button
           onClick={handleSave}
           disabled={status === "saving" || skipping}
-          className="focus-ring rounded-full bg-ink text-paper px-5 py-2.5 text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+          className="safety-profile-save-button focus-ring rounded-full bg-ink text-paper px-5 py-2.5 text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
         >
           {status === "saving" ? "Saving…" : isOnboarding ? "Save & continue" : "Save safety profile"}
         </button>

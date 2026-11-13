@@ -33,6 +33,9 @@ interface Appointment {
   doctor: Doctor | null;
 }
 
+type PatientGender = "male" | "female" | "prefer_not_to_say";
+const MAX_PATIENT_NAME_LENGTH = 120;
+
 type ConsultationPaymentMethod = "jazzcash" | "easypaisa";
 type ConsultationPaymentStatus = "pending" | "simulated_paid" | "failed" | "simulated_refunded";
 
@@ -242,6 +245,9 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [availabilityRefreshKey, setAvailabilityRefreshKey] = useState(0);
   const [message, setMessage] = useState("");
+  const [patientFullName, setPatientFullName] = useState("");
+  const [patientAge, setPatientAge] = useState("");
+  const [patientGender, setPatientGender] = useState<PatientGender | "">("");
   const [loading, setLoading] = useState(true);
   const [paymentLoading, setPaymentLoading] = useState(true);
   const [payingAppointmentId, setPayingAppointmentId] = useState<string | null>(null);
@@ -337,6 +343,24 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
     await loadPaymentData(patientAppointments.map((appointment) => appointment.id));
     setLoading(false);
   }, [loadPaymentData, patientId]);
+
+  useEffect(() => {
+    let active = true;
+    void createClient()
+      .from("profiles")
+      .select("full_name")
+      .eq("id", patientId)
+      .maybeSingle()
+      .then(({ data, error: profileError }) => {
+        if (active && !profileError) {
+          const profileName = data?.full_name?.trim() ?? "";
+          setPatientFullName((current) => current.trim() ? current : profileName);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [patientId]);
 
   useEffect(() => {
     void loadData();
@@ -500,6 +524,16 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
     event.preventDefault();
     if (!selectedDoctor) return;
     setAppointmentError(null);
+    const normalizedPatientName = patientFullName.trim();
+    const normalizedAge = Number(patientAge);
+    if (!normalizedPatientName || normalizedPatientName.length > MAX_PATIENT_NAME_LENGTH) {
+      setAppointmentError(`Enter your full name (up to ${MAX_PATIENT_NAME_LENGTH} characters).`);
+      return;
+    }
+    if (!/^\d+$/.test(patientAge) || !Number.isInteger(normalizedAge) || normalizedAge < 1 || normalizedAge > 120) {
+      setAppointmentError("Enter an age as a whole number from 1 to 120.");
+      return;
+    }
     const today = todayInPakistan();
     const lastBookableDate = addDays(today, 30);
     if (!isDateOnly(date)) {
@@ -560,6 +594,9 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
       appointment_date: date,
       appointment_time: time,
       patient_message: message.trim(),
+      patient_full_name: normalizedPatientName,
+      patient_age: normalizedAge,
+      patient_gender: patientGender || null,
       status: "pending",
     });
 
@@ -578,6 +615,8 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
     setDate("");
     setTime("");
     setMessage("");
+    setPatientAge("");
+    setPatientGender("");
     setNotice("Your request has been sent. You’ll see it here once the dermatologist responds.");
     await loadData();
     setSending(false);
@@ -704,14 +743,14 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
       </section>
 
       {selectedDoctor && (
-        <section className="mt-6 overflow-hidden rounded-2xl border border-[#C8DCF5] bg-white shadow-sm" aria-labelledby="request-heading">
-          <div className="border-b border-[#DCE9F6] bg-[#F4F9FF] px-5 py-4 sm:px-6">
+        <section className="mt-7 overflow-hidden rounded-3xl border border-[#C8DCF5] bg-white shadow-[0_18px_50px_rgba(23,59,115,0.09)]" aria-labelledby="request-heading">
+          <div className="border-b border-[#DCE9F6] bg-gradient-to-r from-[#F4F9FF] via-white to-[#EFFAF8] px-5 py-5 sm:px-7">
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#3978C5]">Appointment request</p>
-            <h2 id="request-heading" className="mt-1 font-display text-xl text-ink">Request with {selectedDoctor.name}</h2>
-            <p className="mt-1 text-sm text-muted">Choose a preferred time. Your appointment remains pending until the dermatologist reviews it.</p>
+            <h2 id="request-heading" className="mt-1 font-display text-xl text-ink sm:text-2xl">Request with {selectedDoctor.name}</h2>
+            <p className="mt-1 text-sm leading-6 text-muted">Choose a preferred time and share the details your dermatologist needs to prepare. Your request remains pending until reviewed.</p>
           </div>
-          <form noValidate onSubmit={requestAppointment} className="grid gap-4 p-5 sm:grid-cols-2 sm:p-6">
-            <div className="rounded-xl border border-[#E5EAF3] bg-[#F8FAFD] p-4 sm:col-span-2">
+          <form noValidate onSubmit={requestAppointment} className="grid gap-5 p-5 sm:grid-cols-2 sm:gap-6 sm:p-7">
+            <div className="rounded-2xl border border-[#E5EAF3] bg-[#F8FAFD] p-4 sm:col-span-2 sm:p-5">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted">Availability</p>
               <p className="mt-1 text-sm font-medium text-ink">
                 {selectedDoctor.available_days.filter((day) => day.trim()).length
@@ -726,6 +765,29 @@ export default function ConsultationHub({ patientId }: { patientId: string }) {
                   ? ` · ${formatFee(selectedDoctor.consultation_fee)}`
                   : ""}
               </p>
+            </div>
+            <div className="grid gap-4 rounded-2xl border border-[#DCE9F6] bg-[#F7FAFE] p-4 sm:col-span-2 sm:grid-cols-2 sm:p-5">
+              <div className="sm:col-span-2">
+                <p className="text-sm font-semibold text-[#173B73]">Patient information</p>
+                <p className="mt-1 text-xs leading-5 text-[#64748B]">Saved with this appointment request and shared with its assigned dermatologist.</p>
+              </div>
+              <label className="text-sm font-medium text-ink">
+                Full Name <span className="text-[#B13D49]">*</span>
+                <input required maxLength={MAX_PATIENT_NAME_LENGTH} autoComplete="name" value={patientFullName} onChange={(event) => setPatientFullName(event.target.value)} className="mt-1 block min-h-11 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm focus:border-[#4C9BE5] focus:outline-none focus:ring-2 focus:ring-[#4C9BE5]/20" />
+              </label>
+              <label className="text-sm font-medium text-ink">
+                Age <span className="text-[#B13D49]">*</span>
+                <input required type="number" inputMode="numeric" min="1" max="120" step="1" value={patientAge} onChange={(event) => setPatientAge(event.target.value)} className="mt-1 block min-h-11 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm focus:border-[#4C9BE5] focus:outline-none focus:ring-2 focus:ring-[#4C9BE5]/20" />
+              </label>
+              <label className="text-sm font-medium text-ink sm:col-span-2">
+                Gender <span className="font-normal text-muted">(optional)</span>
+                <select value={patientGender} onChange={(event) => setPatientGender(event.target.value as PatientGender | "")} className="mt-1 block min-h-11 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm focus:border-[#4C9BE5] focus:outline-none focus:ring-2 focus:ring-[#4C9BE5]/20 sm:max-w-md">
+                  <option value="">Select if you wish</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="prefer_not_to_say">Prefer not to say</option>
+                </select>
+              </label>
             </div>
             <label className="text-sm font-medium text-ink">
               Preferred date
